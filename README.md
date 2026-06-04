@@ -168,6 +168,47 @@ An **assertion failure** means the design violated a rule that the test expected
 
 An **infrastructure failure** means the failure may not be caused by the design itself. Examples include simulator timeout, worker failure, environment issue, or missing artifact.
 
+### Test suites
+
+A **test suite** is a logical group of tests for one area of the design. VerifCore generates these synthetic suites:
+
+| Suite            | Meaning                                                                 |
+| ---------------- | ----------------------------------------------------------------------- |
+| `dma`            | Direct Memory Access logic, which moves blocks of data without CPU help |
+| `systolic_array` | Matrix/AI accelerator compute fabric, like the datapath used in ML chips |
+| `cache`          | Cache behavior, such as storing, reusing, and invalidating data          |
+| `noc`            | Network-on-chip routing between hardware blocks                          |
+| `decoder`        | Packet or instruction decode logic                                       |
+
+The generated test names describe the kind of scenario being exercised:
+
+| Test family          | Meaning                                                             |
+| -------------------- | ------------------------------------------------------------------- |
+| `aligned_burst`      | Burst memory transfer with aligned addresses                         |
+| `backpressure`       | Valid/ready flow control when downstream logic temporarily stalls     |
+| `randomized_smoke`   | Broad randomized sanity test                                         |
+| `reset_recovery`     | Behavior after reset is asserted and released                        |
+| `protocol_stress`    | Heavy protocol-level traffic intended to expose edge cases            |
+
+### Failure Types
+
+VerifCore uses two synthetic failure types:
+
+| Failure type       | Meaning                                                                 |
+| ------------------ | ----------------------------------------------------------------------- |
+| `ASSERTION_FAILED` | The design broke a rule the test was checking                           |
+| `INFRA_FAILURE`    | The run failed for infrastructure reasons, such as a simulator timeout   |
+
+The `assertion` field gives the more specific failure signature:
+
+| Assertion                  | Meaning                                                                     |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `valid_ready_protocol`     | A valid/ready handshake rule was violated                                    |
+| `fifo_no_overflow`         | A FIFO queue was written when it was already full                            |
+| `reset_clears_state`       | State that should be cleared by reset was still present afterward            |
+| `packet_ordering`          | Packets came out in the wrong order                                          |
+| `sim_timeout`              | The simulator timed out before the test completed; this is an infra failure  |
+
 ---
 
 ## Synthetic regression generation
