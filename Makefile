@@ -7,13 +7,17 @@ CPP_SRCS := $(sort $(wildcard cpp/*.cc))
 LOG_PARSER := log_parser
 DB := verifcore.db
 
-.PHONY: build generate parse ingest analyze test ui demo clean
+.PHONY: build generate generate-baseline generate-regression parse ingest analyze test ui demo clean
 
 build:
 	$(CXX) $(CXXFLAGS) $(CPP_SRCS) -o $(LOG_PARSER)
 
-generate:
+generate: generate-baseline generate-regression
+
+generate-baseline:
 	$(PYTHON) -m backend.generate_logs --out sample_logs/run_001.log --seed 1 --num-tests 200
+
+generate-regression:
 	$(PYTHON) -m backend.generate_logs --out sample_logs/run_002.log --seed 2 --num-tests 200 --inject-regressions
 
 parse:

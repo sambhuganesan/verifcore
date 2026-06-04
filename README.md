@@ -2,7 +2,7 @@
 
 VerifCore is a small C++/Python/SQLite project inspired by design verification regression tooling.
 
-It does **not** parse real simulator logs or verify real RTL. Instead, it demonstrates the workflow of turning noisy regression logs into structured, actionable signals:
+It demonstrates the workflow of turning noisy regression logs into structured signals:
 
 * new failures
 * fixed tests
@@ -10,9 +10,9 @@ It does **not** parse real simulator logs or verify real RTL. Instead, it demons
 * infrastructure failures
 * performance regressions
 * failure signature groups
-* status-changing / flaky candidate tests
+* `status_changing` tests
 
-The project is intentionally small, but it mirrors the shape of real regression infrastructure: logs are generated, parsed, normalized into JSONL, ingested into a database, and analyzed across runs.
+The project is intentionally small and it mirrors the shape of real regression infrastructure: logs are generated, parsed, normalized into JSONL, ingested into a database, and analyzed across runs.
 
 ---
 
@@ -20,11 +20,15 @@ The project is intentionally small, but it mirrors the shape of real regression 
 
 Hardware design verification teams run large regression suites to check whether a design still behaves correctly after code changes.
 
-A single regression run can contain many individual tests. Each test may pass, fail due to a design assertion, fail because of infrastructure issues, or become slower than before. Raw logs are hard to inspect manually, especially when there are hundreds or thousands of tests.
+A single regression run can contain many individual tests. A test may 
+* pass
+* fail due to a design assertion 
+* fail because of infrastructure issues
+* become slower than before. 
 
-VerifCore shows how to convert those raw logs into a queryable dataset and then produce a useful regression report.
+Raw logs are hard to inspect manually, especially when there are hundreds or thousands of tests.
 
-The core question is:
+VerifCore shows how to convert those raw logs into a queryable dataset and then produce a useful regression report. It answers the question:
 
 > What changed between the baseline run and the current run?
 
@@ -141,7 +145,7 @@ The identity of a test is:
 suite + test_name + seed
 ```
 
-That identity is stable across runs, so VerifCore can compare the same test in `run_001` and `run_002`.
+Identity is stable across runs, so VerifCore can compare the same test in `run_001` and `run_002`.
 
 ---
 
@@ -230,13 +234,15 @@ The parser is split into small components:
 
 | Component         | Responsibility                                                                  |
 | ----------------- | ------------------------------------------------------------------------------- |
-| `line_reader`     | Reads raw bytes using `open/read/close`, handles arbitrary chunks, splits lines |
+| `line_reader`     | Reads raw bytes using POSIX `open/read/close`, handles arbitrary chunks, splits lines |
 | `line_classifier` | Classifies lines as `RUN`, `METRIC`, `PASS`, `FAIL`, or `UNKNOWN`               |
 | `kv_parser`       | Parses `key=value` fields                                                       |
 | `record_parser`   | Builds complete `TestResult` records from classified lines                      |
 | `test_result`     | Stores test fields and serializes results as JSON                               |
 
-The parser does not assume every record is exactly three lines by position. Instead, it classifies lines and maintains parser state. That makes the design more robust and closer to real log-processing infrastructure.
+The parser classifies lines and maintains two boolean flags 
+have_run and have_metric which indiciate if we are on the 
+current test. This makes the design more robust and closer to real log-processing infrastructure.
 
 ---
 
@@ -333,7 +339,7 @@ CREATE TABLE results (
 );
 ```
 
-With two runs of 200 tests each, the database contains:
+So for example, with two runs of 200 tests each, the database contains:
 
 ```text
 runs:    2 rows
@@ -435,11 +441,11 @@ ASSERTION_FAILED:valid_ready_protocol
 
 This helps reduce many raw failures into a smaller number of debug buckets.
 
-### Status-changing / flaky candidates
+### `status_changing`
 
 Across all stored runs, VerifCore finds tests that have appeared as both `PASS` and `FAIL`.
 
-This is labeled as a “status-changing / flaky candidate” because with only two different commits, a status change may be a real regression or fix rather than true flakiness. True flakiness usually requires repeated runs under the same commit/configuration.
+This is labeled `status_changing` because with only two different commits, a status change may be a real regression or fix rather than true flakiness. True flakiness usually requires repeated runs under the same commit/configuration.
 
 ---
 
@@ -458,7 +464,7 @@ Fixed tests: 7
 Still failing: 9
 Performance regressions: 10
 Infra failures: 9
-Status-changing / flaky candidates: 26
+status_changing: 26
 
 Failure signature groups
 ------------------------
@@ -517,6 +523,8 @@ Useful targets:
 ```bash
 make build     # compile log_parser from cpp/*.cc
 make generate  # create sample_logs/run_001.log and run_002.log
+make generate-baseline    # create sample_logs/run_001.log
+make generate-regression  # create sample_logs/run_002.log with injected regressions
 make parse     # convert logs to parsed/*.jsonl using the C++ parser
 make ingest    # load parsed JSONL into verifcore.db
 make analyze   # print the terminal regression report
@@ -572,8 +580,8 @@ The UI has two pages:
 
 | Page | Purpose |
 | ---- | ------- |
-| `Results` | Main comparison table, summary chart, row search, and change-type filters |
-| `Graphs` | Readable horizontal charts for change counts and failure signatures |
+| `Results` | Main comparison table, row search, change-type filter, and small visuals for the current search |
+| `Graphs` | Searchable visual summary with pass/fail mix, change mix, top suites, change counts, and failure signatures |
 
 The search box is plain text search across table cells. It is not natural-language querying. Useful searches include:
 

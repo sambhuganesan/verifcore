@@ -204,6 +204,30 @@ def flaky_rows(flaky_tests):
     ]
 
 
+def count_by_field(rows, field):
+    counts = {}
+    for row in rows:
+        value = row.get(field) or "none"
+        counts[value] = counts.get(value, 0) + 1
+
+    return [
+        {field: value, "count": count}
+        for value, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def count_changes(rows):
+    counts = {}
+    for row in rows:
+        for change in row["change"].split(", "):
+            counts[change] = counts.get(change, 0) + 1
+
+    return [
+        {"change": change, "count": count}
+        for change, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
 def filter_rows(rows, search_text):
     search_text = search_text.strip().lower()
     if not search_text:
@@ -233,7 +257,7 @@ def change_count_rows(comparison, flaky_count):
         {"change": "still failing", "count": len(comparison["still_failing"])},
         {"change": "perf regression", "count": len(comparison["perf_regressions"])},
         {"change": "infra failure", "count": len(comparison["infra_failures"])},
-        {"change": "flaky candidate", "count": flaky_count},
+        {"change": "status_changing", "count": flaky_count},
     ]
 
 
@@ -285,6 +309,74 @@ def horizontal_bar_chart(rows, label_field, value_field, title, height=300):
     st.altair_chart(chart + labels, width="stretch")
 
 
+def donut_chart(rows, label_field, value_field, title, height=260):
+    if not rows:
+        st.info(f"No data for {title.lower()}.")
+        return
+
+    chart = (
+        alt.Chart(alt.Data(values=rows))
+        .mark_arc(innerRadius=58, outerRadius=105)
+        .encode(
+            theta=alt.Theta(f"{value_field}:Q", title=value_field),
+            color=alt.Color(
+                f"{label_field}:N",
+                title=None,
+                scale=alt.Scale(
+                    range=[
+                        "#2563eb",
+                        "#16a34a",
+                        "#dc2626",
+                        "#f59e0b",
+                        "#7c3aed",
+                        "#0891b2",
+                    ]
+                ),
+            ),
+            tooltip=[
+                alt.Tooltip(f"{label_field}:N", title=label_field),
+                alt.Tooltip(f"{value_field}:Q", title=value_field),
+            ],
+        )
+        .properties(height=height)
+    )
+
+    st.altair_chart(chart, width="stretch")
+
+
+def render_filtered_visuals(diff_rows, current_rows):
+    st.subheader("Visual summary for current search")
+
+    left, right, third = st.columns(3)
+    with left:
+        st.write("Current pass/fail")
+        donut_chart(
+            count_by_field(current_rows, "status"),
+            "status",
+            "count",
+            "Current pass/fail",
+        )
+
+    with right:
+        st.write("Change mix")
+        donut_chart(
+            count_changes(diff_rows),
+            "change",
+            "count",
+            "Change mix",
+        )
+
+    with third:
+        st.write("Top suites")
+        horizontal_bar_chart(
+            count_by_field(current_rows, "suite")[:8],
+            "suite",
+            "count",
+            "Top suites",
+            height=230,
+        )
+
+
 def render_summary_chart(change_rows):
     ordered_rows = [
         row
@@ -294,7 +386,7 @@ def render_summary_chart(change_rows):
             "still failing",
             "perf regression",
             "infra failure",
-            "flaky candidate",
+            "status_changing",
         ]
         for row in change_rows
         if row["change"] == name
@@ -325,7 +417,6 @@ def render_results_page(data, comparison, baseline_name, current_name):
         placeholder="suite, test name, seed, assertion, failure type, worker...",
         label_visibility="collapsed",
     )
-
     diff_rows = build_diff_rows(data)
     category_options = [
         "all changes",
@@ -350,6 +441,13 @@ def render_results_page(data, comparison, baseline_name, current_name):
         "No rows match this search and change type.",
     )
 
+    visible_diff_rows = filter_rows(diff_rows, search_text)
+    visible_current_rows = filter_rows(
+        current_run_rows(data["current_results"]),
+        search_text,
+    )
+    render_filtered_visuals(visible_diff_rows, visible_current_rows)
+
     with st.expander("All current run results"):
         render_table(
             current_run_rows(data["current_results"]),
@@ -357,20 +455,39 @@ def render_results_page(data, comparison, baseline_name, current_name):
             "No current-run rows match this search.",
         )
 
-    with st.expander("Flaky candidates"):
+    with st.expander("status_changing tests"):
         render_table(
             flaky_rows(data["flaky_tests"]),
             search_text,
-            "No flaky candidates match this search.",
+            "No status_changing tests match this search.",
         )
 
 
 def render_graphs_page(data, comparison, baseline_name, current_name):
     st.write(f"**{baseline_name}** -> **{current_name}**")
-    st.caption("Charts use horizontal bars so long signatures and labels stay readable.")
+    st.caption(
+        "Use the search box to graph one subset, for example `dma`, "
+        "`sim_timeout`, `ASSERTION_FAILED`, or `seed=1000`."
+    )
 
     change_rows = change_count_rows(comparison, len(data["flaky_tests"]))
     sig_rows = signature_rows(data["signature_groups"])
+    diff_rows = build_diff_rows(data)
+    all_current_rows = current_run_rows(data["current_results"])
+
+    graph_search = st.text_input(
+        "Graph search",
+        placeholder="suite, test name, seed, assertion, failure type, worker...",
+    )
+    filtered_diff_rows = filter_rows(diff_rows, graph_search)
+    filtered_current_rows = filter_rows(all_current_rows, graph_search)
+
+    st.subheader("Filtered subset")
+    st.caption(
+        f"{len(filtered_current_rows)} current-run tests and "
+        f"{len(filtered_diff_rows)} changed tests match this search."
+    )
+    render_filtered_visuals(filtered_diff_rows, filtered_current_rows)
 
     st.subheader("Change counts")
     horizontal_bar_chart(change_rows, "change", "count", "Change counts", height=260)
