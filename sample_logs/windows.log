@@ -1,0 +1,2 @@
+[PASS]
+[FAIL] type=TIMEOUT assertion=none artifact=logs/x.log

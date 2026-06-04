@@ -1,0 +1,7 @@
+[RUN] suite=dma test=aligned_burst seed=1001 worker=worker-2
+[METRIC] cycles=840 expected_cycles=820 utilization=0.88
+[PASS]
+
+[RUN] suite=systolic_array test=matmul_backpressure seed=1000 worker=worker-1
+[METRIC] cycles=1820 expected_cycles=1700 utilization=0.71
+[FAIL] type=ASSERTION_FAILED assertion=valid_ready_protocol artifact=waves/systolic_array_matmul_backpressure_seed1000.vcd

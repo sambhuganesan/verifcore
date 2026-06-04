@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+.pytest_cache/
+log_parser
+verifcore.db
+parsed/*.jsonl
+sample_logs/run_*.log
