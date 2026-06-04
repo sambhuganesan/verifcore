@@ -1,4 +1,4 @@
-[RUN] suite=dma test=aligned_burst seed=1001 worker=worker-2
+[RUN] suite=dma test=backpressure seed=1001 worker=worker-2
 [METRIC] cycles=840 expected_cycles=820 utilization=0.88
 [PASS]
 
