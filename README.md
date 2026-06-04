@@ -4,6 +4,28 @@ VerifCore is a small C++/Python/SQLite project inspired by design verification r
 
 The technical goal was to build the core pipeline directly instead of wrapping a large parsing or analytics framework. The C++ parser is a small systems-programming component built with the standard library: it reads log lines, classifies records, parses key/value fields, and emits JSONL without external C++ dependencies. The Python backend also stays lightweight and uses the standard library for log generation, SQLite ingestion, and run comparison. Streamlit is used only for the local demo UI.
 
+## Quick Start
+
+From the `verifcore/` directory:
+
+```bash
+make demo NUM_TESTS=1000
+```
+
+This builds the C++ parser, generates baseline/regression logs, parses them into JSONL, ingests them into SQLite, and prints the regression report.
+
+To launch the local UI:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+make ui
+```
+
+Then open the Streamlit URL printed in the terminal.
+
+---
+
 It demonstrates the workflow of turning noisy regression logs into structured signals:
 
 * new failures
