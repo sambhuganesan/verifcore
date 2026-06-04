@@ -180,7 +180,7 @@ Baseline run:
 python3 -m backend.generate_logs \
   --out sample_logs/run_001.log \
   --seed 1 \
-  --num-tests 200
+  --num-tests <count>
 ```
 
 Current run with injected regressions:
@@ -189,7 +189,7 @@ Current run with injected regressions:
 python3 -m backend.generate_logs \
   --out sample_logs/run_002.log \
   --seed 2 \
-  --num-tests 200 \
+  --num-tests <count> \
   --inject-regressions
 ```
 
@@ -536,7 +536,6 @@ Useful targets:
 
 ```bash
 make build     # compile log_parser from cpp/*.cc
-make generate  # create sample_logs/run_001.log and run_002.log
 make generate-baseline    # create sample_logs/run_001.log
 make generate-regression  # create sample_logs/run_002.log with injected regressions
 make parse     # convert logs to parsed/*.jsonl using the C++ parser
@@ -544,8 +543,16 @@ make ingest    # load parsed JSONL into verifcore.db
 make analyze   # print the terminal regression report
 make test      # run pytest tests
 make ui        # start the Streamlit dashboard
-make demo      # clean -> build -> generate -> parse -> ingest -> analyze
+make demo      # clean -> build -> generate-baseline -> generate-regression -> parse -> ingest -> analyze
 make clean     # remove generated demo artifacts
+```
+
+Generation defaults to 200 tests per run. Override it with `NUM_TESTS`:
+
+```bash
+make generate-baseline NUM_TESTS=1000
+make generate-regression NUM_TESTS=1000
+make demo NUM_TESTS=1000
 ```
 
 `make clean` removes generated files only:
@@ -623,8 +630,8 @@ If not using the Makefile, run the project manually:
 g++ -std=c++17 -Wall -Wextra -O2 cpp/*.cc -o log_parser
 
 # Generate logs
-python3 -m backend.generate_logs --out sample_logs/run_001.log --seed 1 --num-tests 200
-python3 -m backend.generate_logs --out sample_logs/run_002.log --seed 2 --num-tests 200 --inject-regressions
+python3 -m backend.generate_logs --out sample_logs/run_001.log --seed 1 --num-tests <count>
+python3 -m backend.generate_logs --out sample_logs/run_002.log --seed 2 --num-tests <count> --inject-regressions
 
 # Parse logs to JSONL
 ./log_parser sample_logs/run_001.log > parsed/run_001.jsonl

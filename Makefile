@@ -2,23 +2,22 @@ CXX ?= g++
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -O2
 PYTHON ?= python3
 STREAMLIT_PYTHON ?= .venv/bin/python
+NUM_TESTS ?= 200
 
 CPP_SRCS := $(sort $(wildcard cpp/*.cc))
 LOG_PARSER := log_parser
 DB := verifcore.db
 
-.PHONY: build generate generate-baseline generate-regression parse ingest analyze test ui demo clean
+.PHONY: build generate-baseline generate-regression parse ingest analyze test ui demo clean
 
 build:
 	$(CXX) $(CXXFLAGS) $(CPP_SRCS) -o $(LOG_PARSER)
 
-generate: generate-baseline generate-regression
-
 generate-baseline:
-	$(PYTHON) -m backend.generate_logs --out sample_logs/run_001.log --seed 1 --num-tests 200
+	$(PYTHON) -m backend.generate_logs --out sample_logs/run_001.log --seed 1 --num-tests $(NUM_TESTS)
 
 generate-regression:
-	$(PYTHON) -m backend.generate_logs --out sample_logs/run_002.log --seed 2 --num-tests 200 --inject-regressions
+	$(PYTHON) -m backend.generate_logs --out sample_logs/run_002.log --seed 2 --num-tests $(NUM_TESTS) --inject-regressions
 
 parse:
 	mkdir -p parsed
@@ -41,7 +40,8 @@ ui:
 demo:
 	$(MAKE) clean
 	$(MAKE) build
-	$(MAKE) generate
+	$(MAKE) generate-baseline
+	$(MAKE) generate-regression
 	$(MAKE) parse
 	$(MAKE) ingest
 	$(MAKE) analyze
