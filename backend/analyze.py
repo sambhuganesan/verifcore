@@ -86,11 +86,16 @@ def is_perf_regression(baseline_cycles, current_cycles, threshold=0.2):
     return current_cycles >= baseline_cycles * (1 + threshold)
 
 
+def is_perf_improvement(baseline_cycles, current_cycles, threshold=0.0):
+    return current_cycles < baseline_cycles * (1 - threshold)
+
+
 def compare_runs(baseline_results, current_results):
     new_failures = []
     fixed_tests = []
     still_failing = []
     perf_regressions = []
+    perf_improvements = []
     infra_failures = []
 
     common_keys = sorted(baseline_results.keys() & current_results.keys())
@@ -111,6 +116,9 @@ def compare_runs(baseline_results, current_results):
         if is_perf_regression(baseline["cycles"], current["cycles"]):
             perf_regressions.append((baseline, current))
 
+        if is_perf_improvement(baseline["cycles"], current["cycles"]):
+            perf_improvements.append((baseline, current))
+
         if current["status"] == "FAIL" and current["failure_type"] == "INFRA_FAILURE":
             infra_failures.append(current)
 
@@ -119,6 +127,7 @@ def compare_runs(baseline_results, current_results):
         "fixed_tests": fixed_tests,
         "still_failing": still_failing,
         "perf_regressions": perf_regressions,
+        "perf_improvements": perf_improvements,
         "infra_failures": infra_failures,
     }
 
@@ -204,28 +213,29 @@ def print_test_examples(title, records, limit=5):
         print(f"... and {len(records) - limit} more")
 
 
-def print_perf_examples(perf_regressions, limit=5):
+def print_perf_examples(title, perf_results, limit=5):
     print()
-    print("Performance regression examples")
-    print("-------------------------------")
+    print(title)
+    print("-" * len(title))
 
-    if not perf_regressions:
+    if not perf_results:
         print("none")
         return
 
-    for baseline, current in perf_regressions[:limit]:
+    for baseline, current in perf_results[:limit]:
         delta = current["cycles"] - baseline["cycles"]
         pct = (delta / baseline["cycles"]) * 100
+        sign = "+" if pct >= 0 else ""
 
         print(
             f'{current["suite"]}.{current["test_name"]} '
             f'seed={current["seed"]} '
             f'{baseline["cycles"]} -> {current["cycles"]} '
-            f'(+{pct:.1f}%)'
+            f'({sign}{pct:.1f}%)'
         )
 
-    if len(perf_regressions) > limit:
-        print(f"... and {len(perf_regressions) - limit} more")
+    if len(perf_results) > limit:
+        print(f"... and {len(perf_results) - limit} more")
 
 
 def print_signature_groups(signature_groups, limit=10):
@@ -246,8 +256,8 @@ def print_signature_groups(signature_groups, limit=10):
 
 def print_flaky_tests(flaky_tests, limit=10):
     print()
-    print(f"Status-changing / flaky candidates")
-    print("----------------------------------")
+    print("status_changing examples")
+    print("------------------------")
 
     if not flaky_tests:
         print("none")
@@ -297,16 +307,18 @@ def main():
     print("Summary")
     print("-------")
     print(f'New failures: {len(comparison["new_failures"])}')
-    print(f'Fixed tests: {len(comparison["fixed_tests"])}')
+    print(f'Corrected tests: {len(comparison["fixed_tests"])}')
     print(f'Still failing: {len(comparison["still_failing"])}')
-    print(f'Performance regressions: {len(comparison["perf_regressions"])}')
+    print(f'Regressed: {len(comparison["perf_regressions"])}')
+    print(f'Improved: {len(comparison["perf_improvements"])}')
     print(f'Infra failures: {len(comparison["infra_failures"])}')
-    print(f"Status-changing / flaky candidates: {len(flaky_tests)}")
+    print(f"status_changing: {len(flaky_tests)}")
 
     print_test_examples("New failure examples", comparison["new_failures"])
-    print_test_examples("Fixed test examples", comparison["fixed_tests"])
+    print_test_examples("Corrected test examples", comparison["fixed_tests"])
     print_test_examples("Still failing examples", comparison["still_failing"])
-    print_perf_examples(comparison["perf_regressions"])
+    print_perf_examples("Regressed examples", comparison["perf_regressions"])
+    print_perf_examples("Improved examples", comparison["perf_improvements"])
     print_test_examples("Infra failure examples", comparison["infra_failures"])
     print_signature_groups(signature_groups)
     print_flaky_tests(flaky_tests)

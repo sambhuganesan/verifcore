@@ -1,5 +1,6 @@
 from backend.analyze import (
     is_perf_regression,
+    is_perf_improvement,
     group_failure_signatures,
     compare_runs,
 )
@@ -11,6 +12,14 @@ def test_is_perf_regression_true():
 
 def test_is_perf_regression_false():
     assert not is_perf_regression(100, 110, threshold=0.2)
+
+
+def test_is_perf_improvement_true():
+    assert is_perf_improvement(100, 99)
+
+
+def test_is_perf_improvement_false():
+    assert not is_perf_improvement(100, 100)
 
 
 def test_group_failure_signatures_ignores_passes():
@@ -75,6 +84,15 @@ def test_compare_runs_detects_categories():
             "assertion_name": "none",
             "cycles": 100,
         },
+        ("dma", "fast", 5): {
+            "suite": "dma",
+            "test_name": "fast",
+            "seed": 5,
+            "status": "PASS",
+            "failure_type": "none",
+            "assertion_name": "none",
+            "cycles": 100,
+        },
     }
 
     current_results = {
@@ -114,6 +132,15 @@ def test_compare_runs_detects_categories():
             "assertion_name": "none",
             "cycles": 130,
         },
+        ("dma", "fast", 5): {
+            "suite": "dma",
+            "test_name": "fast",
+            "seed": 5,
+            "status": "PASS",
+            "failure_type": "none",
+            "assertion_name": "none",
+            "cycles": 75,
+        },
     }
 
     comparison = compare_runs(baseline_results, current_results)
@@ -122,4 +149,5 @@ def test_compare_runs_detects_categories():
     assert len(comparison["fixed_tests"]) == 1
     assert len(comparison["still_failing"]) == 1
     assert len(comparison["perf_regressions"]) == 1
+    assert len(comparison["perf_improvements"]) == 1
     assert len(comparison["infra_failures"]) == 0

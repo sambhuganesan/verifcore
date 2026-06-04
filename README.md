@@ -5,10 +5,11 @@ VerifCore is a small C++/Python/SQLite project inspired by design verification r
 It demonstrates the workflow of turning noisy regression logs into structured signals:
 
 * new failures
-* fixed tests
+* corrected tests
 * still-failing tests
 * infrastructure failures
-* performance regressions
+* regressed tests
+* improved tests
 * failure signature groups
 * `status_changing` tests
 
@@ -201,9 +202,10 @@ suite + test_name + seed
 The current run intentionally injects useful regression-analysis cases:
 
 * new failures
-* fixed tests
+* corrected tests
 * still-failing tests
-* performance regressions
+* regressed tests
+* improved tests
 * infrastructure failures
 * repeated failure signatures
 
@@ -376,7 +378,7 @@ baseline: PASS
 current:  FAIL
 ```
 
-### Fixed tests
+### Corrected tests
 
 A test failed in the baseline run and passed in the current run.
 
@@ -394,9 +396,9 @@ baseline: FAIL
 current:  FAIL
 ```
 
-### Performance regressions
+### Regressed
 
-A test is flagged if current cycles are at least 20% higher than baseline cycles.
+A test is regressed if current cycles are at least 20% higher than baseline cycles.
 
 ```text
 current_cycles >= baseline_cycles * 1.20
@@ -412,7 +414,17 @@ current cycles  = 863
 863 >= 820.8
 ```
 
-So this is a performance regression.
+So this test is regressed.
+
+### Improved
+
+A test is improved if current cycles are lower than baseline cycles.
+
+```text
+current_cycles < baseline_cycles
+```
+
+This highlights successful changes where the current run got faster.
 
 ### Infrastructure failures
 
@@ -460,9 +472,10 @@ Current  run_002: 200 tests
 Summary
 -------
 New failures: 19
-Fixed tests: 7
+Corrected tests: 7
 Still failing: 9
-Performance regressions: 10
+Regressed: 10
+Improved: 90
 Infra failures: 9
 status_changing: 26
 
@@ -493,9 +506,10 @@ The current tests cover:
 * run comparison categories:
 
   * new failures
-  * fixed tests
+  * corrected tests
   * still failing tests
-  * performance regressions
+  * regressed tests
+  * improved tests
 
 ---
 
@@ -576,12 +590,16 @@ Streamlit prints a local URL such as:
 http://localhost:8501
 ```
 
-The UI has two pages:
+The UI is a single results page with:
 
-| Page | Purpose |
-| ---- | ------- |
-| `Results` | Main comparison table, row search, change-type filter, and small visuals for the current search |
-| `Graphs` | Searchable visual summary with pass/fail mix, change mix, top suites, change counts, and failure signatures |
+* a summary bar chart
+* the main comparison table
+* row search
+* change-type filtering
+* small visuals for the current search
+* failure signature groups
+
+The `all flagged` category is the union of rows worth triaging, including negative comparison changes and `status_changing` tests. `improved` is queryable as a filter, but it is not included in `all flagged`.
 
 The search box is plain text search across table cells. It is not natural-language querying. Useful searches include:
 
@@ -649,7 +667,7 @@ Current limitations:
 
 Possible extensions:
 
-* Add FastAPI endpoints for querying runs, failures, and performance regressions.
+* Add FastAPI endpoints for querying runs, failures, regressed tests, and improved tests.
 * Add a React frontend for a more polished dashboard.
 * Add support for uploaded log files.
 * Add richer SQL queries for filtering by suite, assertion, failure type, or worker.
