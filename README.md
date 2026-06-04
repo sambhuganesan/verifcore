@@ -308,7 +308,7 @@ The parser is split into small components:
 | `test_result`     | Stores test fields and serializes results as JSON                               |
 
 The parser classifies lines and maintains two boolean flags 
-have_run and have_metric which indiciate if we are on the 
+have_run and have_metric which indicate if we are on the 
 current test. This makes the design more robust and closer to real log-processing infrastructure.
 
 ---
