@@ -63,7 +63,8 @@ def main():
 
             expected_cycles = 700 + (i % 20) * 25
             cycles = expected_cycles + random.randint(-50, 80)
-            if args.inject_regressions and i % 19 == 0:
+            variant_i = i + args.seed
+            if args.inject_regressions and variant_i % 19 == 0:
                 cycles = int(cycles * 1.30)
             utilization = round(random.uniform(0.60, 0.95), 2)
 
@@ -71,17 +72,17 @@ def main():
             is_fail = baseline_fail
 
             if args.inject_regressions:
-                if i % 26 == 0:
+                if variant_i % 26 == 0:
                     is_fail = False
-                if i % 17 == 0:
+                if variant_i % 17 == 0:
                     is_fail = True
-                if i % 23 == 0:
+                if variant_i % 23 == 0:
                     is_fail = True
 
             if is_fail:
                 status = "FAIL"
 
-                if args.inject_regressions and i % 23 == 0:
+                if args.inject_regressions and variant_i % 23 == 0:
                     failure_type = "INFRA_FAILURE"
                     assertion_name = "sim_timeout"
                 else:

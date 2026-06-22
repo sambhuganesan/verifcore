@@ -2,6 +2,7 @@ import sqlite3
 
 from backend import db
 from backend.triage_sql import (
+    compare_run_to_many,
     current_failures,
     current_failures_by_worker,
     failed_test_vcds,
@@ -31,6 +32,11 @@ def make_fixture_db():
         ("run_002", "def456", "2026-06-21T00:01:00"),
     )
     current_id = cur.lastrowid
+    cur.execute(
+        "INSERT INTO runs (run_name, commit_hash, created_at) VALUES (?, ?, ?)",
+        ("run_003", "ghi789", "2026-06-21T00:02:00"),
+    )
+    third_id = cur.lastrowid
 
     baseline_rows = [
         ("dma", "new_fail", 1, "worker-1", "PASS", None, None, None, 100, 100, 0.8),
@@ -48,11 +54,20 @@ def make_fixture_db():
         ("cache", "fast", 5, "worker-3", "PASS", None, None, None, 75, 100, 0.8),
         ("noc", "infra", 6, "worker-4", "FAIL", "INFRA_FAILURE", "sim_timeout", "waves/infra.vcd", 100, 100, 0.8),
     ]
+    third_rows = [
+        ("dma", "new_fail", 1, "worker-1", "PASS", None, None, None, 100, 100, 0.8),
+        ("dma", "fixed", 2, "worker-1", "PASS", None, None, None, 100, 100, 0.8),
+        ("dma", "still_fail", 3, "worker-2", "FAIL", "ASSERTION_FAILED", "packet_ordering", "waves/still_3.vcd", 125, 100, 0.8),
+        ("cache", "slow", 4, "worker-3", "PASS", None, None, None, 150, 100, 0.8),
+        ("cache", "fast", 5, "worker-3", "PASS", None, None, None, 90, 100, 0.8),
+        ("noc", "infra", 6, "worker-4", "PASS", None, None, None, 100, 100, 0.8),
+    ]
 
     insert_results(conn, baseline_id, baseline_rows)
     insert_results(conn, current_id, current_rows)
+    insert_results(conn, third_id, third_rows)
     conn.commit()
-    return conn, baseline_id, current_id
+    return conn, baseline_id, current_id, third_id
 
 
 def insert_results(conn, run_id, rows):
@@ -138,7 +153,7 @@ def insert_results(conn, run_id, rows):
 
 
 def test_comparison_rows_compute_status_and_perf_relationships():
-    conn, baseline_id, current_id = make_fixture_db()
+    conn, baseline_id, current_id, _ = make_fixture_db()
 
     rows = fetch_comparison_rows(conn, baseline_id, current_id)
     by_name = {row["test_name"]: row for row in rows}
@@ -154,7 +169,7 @@ def test_comparison_rows_compute_status_and_perf_relationships():
 
 
 def test_comparison_summary_matches_python_analysis_categories():
-    conn, baseline_id, current_id = make_fixture_db()
+    conn, baseline_id, current_id, _ = make_fixture_db()
 
     summary = summarize_comparison(conn, baseline_id, current_id)
 
@@ -170,7 +185,7 @@ def test_comparison_summary_matches_python_analysis_categories():
 
 
 def test_top_failure_signatures_groups_current_failures():
-    conn, baseline_id, current_id = make_fixture_db()
+    conn, baseline_id, current_id, _ = make_fixture_db()
 
     signatures = top_failure_signatures(conn, baseline_id, current_id)
 
@@ -182,7 +197,7 @@ def test_top_failure_signatures_groups_current_failures():
 
 
 def test_new_failures_returns_comparison_rows():
-    conn, baseline_id, current_id = make_fixture_db()
+    conn, baseline_id, current_id, _ = make_fixture_db()
 
     rows = new_failures(conn, baseline_id, current_id)
 
@@ -190,7 +205,7 @@ def test_new_failures_returns_comparison_rows():
 
 
 def test_worst_perf_regressions_orders_by_cycle_change():
-    conn, baseline_id, current_id = make_fixture_db()
+    conn, baseline_id, current_id, _ = make_fixture_db()
 
     rows = worst_perf_regressions(conn, baseline_id, current_id)
 
@@ -199,7 +214,7 @@ def test_worst_perf_regressions_orders_by_cycle_change():
 
 
 def test_current_failures_by_worker_can_filter_to_dma():
-    conn, _, current_id = make_fixture_db()
+    conn, _, current_id, _ = make_fixture_db()
 
     rows = current_failures_by_worker(conn, current_id, suite="dma")
 
@@ -224,7 +239,7 @@ def test_current_failures_by_worker_can_filter_to_dma():
 
 
 def test_failed_test_vcds_returns_current_failure_artifacts():
-    conn, _, current_id = make_fixture_db()
+    conn, _, current_id, _ = make_fixture_db()
 
     rows = failed_test_vcds(conn, current_id)
 
@@ -236,7 +251,7 @@ def test_failed_test_vcds_returns_current_failure_artifacts():
 
 
 def test_current_failures_returns_normalized_debug_fields():
-    conn, _, current_id = make_fixture_db()
+    conn, _, current_id, _ = make_fixture_db()
 
     rows = current_failures(conn, current_id)
 
@@ -245,7 +260,7 @@ def test_current_failures_returns_normalized_debug_fields():
 
 
 def test_query_comparison_combines_question_and_filters():
-    conn, baseline_id, current_id = make_fixture_db()
+    conn, baseline_id, current_id, _ = make_fixture_db()
 
     rows = query_comparison(
         conn,
@@ -262,7 +277,7 @@ def test_query_comparison_combines_question_and_filters():
 
 
 def test_query_comparison_supports_slowdown_threshold():
-    conn, baseline_id, current_id = make_fixture_db()
+    conn, baseline_id, current_id, _ = make_fixture_db()
 
     rows = query_comparison(
         conn,
@@ -276,7 +291,7 @@ def test_query_comparison_supports_slowdown_threshold():
 
 
 def test_slowed_down_query_includes_passing_tests():
-    conn, baseline_id, current_id = make_fixture_db()
+    conn, baseline_id, current_id, _ = make_fixture_db()
 
     rows = query_comparison(
         conn,
@@ -290,7 +305,7 @@ def test_slowed_down_query_includes_passing_tests():
 
 
 def test_query_comparison_rejects_unknown_query_kind():
-    conn, baseline_id, current_id = make_fixture_db()
+    conn, baseline_id, current_id, _ = make_fixture_db()
 
     try:
         query_comparison(conn, baseline_id, current_id, query_kind="raw_sql_plz")
@@ -299,8 +314,50 @@ def test_query_comparison_rejects_unknown_query_kind():
         pass
 
 
+def test_compare_run_to_many_summarizes_all_other_runs():
+    conn, baseline_id, current_id, third_id = make_fixture_db()
+
+    rows = compare_run_to_many(conn, baseline_id)
+
+    assert rows == [
+        {
+            "compared_run_id": current_id,
+            "compared_run": "run_002",
+            "commit_hash": "def456",
+            "created_at": "2026-06-21T00:01:00",
+            "compared_tests": 6,
+            "new_failures": 2,
+            "fixed_tests": 1,
+            "still_failing": 1,
+            "slower_tests": 2,
+            "infra_failures": 1,
+        },
+        {
+            "compared_run_id": third_id,
+            "compared_run": "run_003",
+            "commit_hash": "ghi789",
+            "created_at": "2026-06-21T00:02:00",
+            "compared_tests": 6,
+            "new_failures": 0,
+            "fixed_tests": 1,
+            "still_failing": 1,
+            "slower_tests": 2,
+            "infra_failures": 0,
+        },
+    ]
+
+
+def test_compare_run_to_many_can_limit_compared_runs():
+    conn, baseline_id, _, third_id = make_fixture_db()
+
+    rows = compare_run_to_many(conn, baseline_id, compared_run_ids=[third_id])
+
+    assert len(rows) == 1
+    assert rows[0]["compared_run"] == "run_003"
+
+
 def test_filter_values_lists_queryable_fields():
-    conn, _, current_id = make_fixture_db()
+    conn, _, current_id, _ = make_fixture_db()
 
     values = filter_values(conn, current_id)
 
@@ -315,7 +372,7 @@ def test_filter_values_lists_queryable_fields():
 
 
 def test_schema_rejects_duplicate_result_identity_per_run():
-    conn, baseline_id, _ = make_fixture_db()
+    conn, baseline_id, _, _ = make_fixture_db()
 
     duplicate = (
         baseline_id,

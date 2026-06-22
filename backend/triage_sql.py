@@ -258,6 +258,63 @@ def summarize_comparison(conn, baseline_run_id, current_run_id):
     return dict(cur.fetchone())
 
 
+def compare_run_to_many(conn, reference_run_id, compared_run_ids=None):
+    conn.row_factory = _row_factory(conn.row_factory)
+    params = [reference_run_id, reference_run_id]
+    run_filter = ""
+
+    if compared_run_ids:
+        placeholders = ", ".join("?" for _ in compared_run_ids)
+        run_filter = f"AND c.run_id IN ({placeholders})"
+        params.extend(compared_run_ids)
+
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        WITH compared AS (
+            SELECT
+                c.run_id AS compared_run_id,
+                b.status AS reference_status,
+                c.status AS compared_status,
+                b.cycles AS reference_cycles,
+                c.cycles AS compared_cycles,
+                c.failure_type AS compared_failure_type
+            FROM result_details b
+            JOIN result_details c
+              ON b.suite = c.suite
+             AND b.test_name = c.test_name
+             AND b.seed = c.seed
+            WHERE b.run_id = ?
+              AND c.run_id != ?
+              {run_filter}
+        )
+        SELECT
+            r.id AS compared_run_id,
+            r.run_name AS compared_run,
+            r.commit_hash AS commit_hash,
+            r.created_at AS created_at,
+            COUNT(*) AS compared_tests,
+            SUM(reference_status = 'PASS' AND compared_status = 'FAIL')
+                AS new_failures,
+            SUM(reference_status = 'FAIL' AND compared_status = 'PASS')
+                AS fixed_tests,
+            SUM(reference_status = 'FAIL' AND compared_status = 'FAIL')
+                AS still_failing,
+            SUM(compared_cycles >= reference_cycles * 1.2)
+                AS slower_tests,
+            SUM(compared_status = 'FAIL' AND compared_failure_type = 'INFRA_FAILURE')
+                AS infra_failures
+        FROM compared cmp
+        JOIN runs r
+          ON r.id = cmp.compared_run_id
+        GROUP BY r.id
+        ORDER BY r.created_at, r.id
+        """,
+        params,
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
 def top_failure_signatures(conn, baseline_run_id, current_run_id, limit=10):
     conn.row_factory = _row_factory(conn.row_factory)
     cur = conn.cursor()

@@ -80,24 +80,40 @@ def load_runs(db_path):
 
 
 @st.cache_data
-def load_triage(db_path, baseline_name, current_name):
+def load_triage(db_path, reference_name, compared_name):
     conn = db.connect(db_path)
     conn.row_factory = _row_factory
 
-    baseline_id = get_run_id(conn, baseline_name)
-    current_id = get_run_id(conn, current_name)
+    reference_id = get_run_id(conn, reference_name)
+    compared_id = get_run_id(conn, compared_name)
 
     data = {
-        "baseline_id": baseline_id,
-        "current_id": current_id,
-        "baseline_count": count_results(conn, baseline_id),
-        "current_count": count_results(conn, current_id),
-        "summary": triage_sql.summarize_comparison(conn, baseline_id, current_id),
-        "filters": triage_sql.filter_values(conn, current_id),
+        "reference_id": reference_id,
+        "compared_id": compared_id,
+        "reference_count": count_results(conn, reference_id),
+        "compared_count": count_results(conn, compared_id),
+        "summary": triage_sql.summarize_comparison(conn, reference_id, compared_id),
+        "filters": triage_sql.filter_values(conn, compared_id),
     }
 
     conn.close()
     return data
+
+
+@st.cache_data
+def load_many_run_comparison(db_path, reference_name, compared_names):
+    conn = db.connect(db_path)
+    conn.row_factory = _row_factory
+    reference_id = get_run_id(conn, reference_name)
+    compared_ids = [get_run_id(conn, run_name) for run_name in compared_names]
+    rows = triage_sql.compare_run_to_many(conn, reference_id, compared_ids)
+    reference_count = count_results(conn, reference_id)
+    conn.close()
+    return {
+        "reference_id": reference_id,
+        "reference_count": reference_count,
+        "rows": rows,
+    }
 
 
 @st.cache_data
@@ -278,8 +294,8 @@ def render_query_builder(db_path, data, metric_slot):
     else:
         rows = run_query(
             str(db_path),
-            data["baseline_id"],
-            data["current_id"],
+            data["reference_id"],
+            data["compared_id"],
             query_kind,
             suite,
             worker,
@@ -313,6 +329,25 @@ def render_dashboard(db_path, data):
     render_query_builder(db_path, data, metric_slot)
 
 
+def many_run_metrics(rows):
+    cols = st.columns(6)
+    metrics = [
+        ("Runs", len(rows)),
+        ("Compared tests", sum(row["compared_tests"] for row in rows)),
+        ("New failures", sum(row["new_failures"] for row in rows)),
+        ("Fixed", sum(row["fixed_tests"] for row in rows)),
+        ("Slower", sum(row["slower_tests"] for row in rows)),
+        ("Infra", sum(row["infra_failures"] for row in rows)),
+    ]
+    for col, (label, value) in zip(cols, metrics):
+        col.metric(label, int(value or 0))
+
+
+def render_many_run_comparison(data):
+    many_run_metrics(data["rows"])
+    dataframe(data["rows"], height=520)
+
+
 def main():
     st.title("VerifCore")
     st.caption("SQL-backed regression triage")
@@ -332,29 +367,44 @@ def main():
             return
 
         run_names = [run["run_name"] for run in runs]
-        baseline_name = st.selectbox("Baseline run", run_names, index=0)
-        current_name = st.selectbox("Current run", run_names, index=1)
+        reference_name = st.selectbox("Reference run", run_names, index=0)
+        compared_options = [run_name for run_name in run_names if run_name != reference_name]
+        default_compared = compared_options[:1]
+        compared_names = st.multiselect(
+            "Compare to",
+            compared_options,
+            default=default_compared,
+        )
 
         st.divider()
         st.caption("Selected commits")
+        selected_names = {reference_name, *compared_names}
         for run in runs:
-            if run["run_name"] in {baseline_name, current_name}:
+            if run["run_name"] in selected_names:
                 st.write(f'`{run["run_name"]}` · `{run["commit_hash"]}`')
 
         if st.button("Refresh", width="stretch"):
             st.cache_data.clear()
             st.rerun()
 
-    if baseline_name == current_name:
-        st.warning("Choose two different runs.")
+    if not compared_names:
+        st.warning("Choose at least one run to compare against the reference run.")
         return
 
-    data = load_triage(str(db_file), baseline_name, current_name)
-    st.write(
-        f"**{baseline_name}** ({data['baseline_count']} tests) -> "
-        f"**{current_name}** ({data['current_count']} tests)"
-    )
-    render_dashboard(str(db_file), data)
+    if len(compared_names) == 1:
+        compared_name = compared_names[0]
+        data = load_triage(str(db_file), reference_name, compared_name)
+        st.write(
+            f"**{reference_name}** ({data['reference_count']} tests) -> "
+            f"**{compared_name}** ({data['compared_count']} tests)"
+        )
+        render_dashboard(str(db_file), data)
+    else:
+        data = load_many_run_comparison(str(db_file), reference_name, tuple(compared_names))
+        st.write(
+            f"Reference: **{reference_name}** ({data['reference_count']} tests)"
+        )
+        render_many_run_comparison(data)
 
 
 if __name__ == "__main__":

@@ -3,12 +3,13 @@ CXXFLAGS ?= -std=c++17 -Wall -Wextra -O2
 PYTHON ?= python3
 STREAMLIT_PYTHON ?= .venv/bin/python
 NUM_TESTS ?= 200
+NUM_RUNS ?= 2
 
 CPP_SRCS := $(sort $(wildcard cpp/*.cc))
 LOG_PARSER := log_parser
 DB := verifcore.db
 
-.PHONY: build generate-baseline generate-regression parse ingest analyze test ui demo clean
+.PHONY: build generate-baseline generate-regression generate-runs parse ingest analyze test ui demo clean
 
 build:
 	$(CXX) $(CXXFLAGS) $(CPP_SRCS) -o $(LOG_PARSER)
@@ -19,14 +20,31 @@ generate-baseline:
 generate-regression:
 	$(PYTHON) -m backend.generate_logs --out sample_logs/run_002.log --seed 2 --num-tests $(NUM_TESTS) --inject-regressions
 
+generate-runs:
+	@if [ "$(NUM_RUNS)" -lt 2 ]; then echo "NUM_RUNS must be at least 2"; exit 1; fi
+	mkdir -p sample_logs
+	$(PYTHON) -m backend.generate_logs --out sample_logs/run_001.log --seed 1 --num-tests $(NUM_TESTS)
+	@i=2; while [ $$i -le $(NUM_RUNS) ]; do \
+		run_name=$$(printf "run_%03d" $$i); \
+		$(PYTHON) -m backend.generate_logs --out sample_logs/$$run_name.log --seed $$i --num-tests $(NUM_TESTS) --inject-regressions; \
+		i=$$((i + 1)); \
+	done
+
 parse:
 	mkdir -p parsed
-	./$(LOG_PARSER) sample_logs/run_001.log > parsed/run_001.jsonl
-	./$(LOG_PARSER) sample_logs/run_002.log > parsed/run_002.jsonl
+	@i=1; while [ $$i -le $(NUM_RUNS) ]; do \
+		run_name=$$(printf "run_%03d" $$i); \
+		./$(LOG_PARSER) sample_logs/$$run_name.log > parsed/$$run_name.jsonl; \
+		i=$$((i + 1)); \
+	done
 
 ingest:
-	$(PYTHON) -m backend.ingest --db $(DB) --run-name run_001 --commit abc123 parsed/run_001.jsonl
-	$(PYTHON) -m backend.ingest --db $(DB) --run-name run_002 --commit def456 parsed/run_002.jsonl
+	@i=1; while [ $$i -le $(NUM_RUNS) ]; do \
+		run_name=$$(printf "run_%03d" $$i); \
+		commit_hash=$$(printf "commit_%03d" $$i); \
+		$(PYTHON) -m backend.ingest --db $(DB) --run-name $$run_name --commit $$commit_hash parsed/$$run_name.jsonl; \
+		i=$$((i + 1)); \
+	done
 
 analyze:
 	$(PYTHON) -m backend.analyze --db $(DB) --baseline run_001 --current run_002
@@ -40,10 +58,9 @@ ui:
 demo:
 	$(MAKE) clean
 	$(MAKE) build
-	$(MAKE) generate-baseline
-	$(MAKE) generate-regression
-	$(MAKE) parse
-	$(MAKE) ingest
+	$(MAKE) generate-runs NUM_TESTS=$(NUM_TESTS) NUM_RUNS=$(NUM_RUNS)
+	$(MAKE) parse NUM_RUNS=$(NUM_RUNS)
+	$(MAKE) ingest NUM_RUNS=$(NUM_RUNS)
 	$(MAKE) analyze
 
 clean:

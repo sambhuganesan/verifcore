@@ -19,11 +19,15 @@ raw logs -> structured records -> relational database -> SQL triage UI
 From the `verifcore/` directory:
 
 ```bash
-make demo NUM_TESTS=1000
+make demo
 ```
 
-This builds the C++ parser, generates baseline/current logs, parses them into
-JSONL, ingests them into SQLite, and prints the terminal regression report.
+This builds the C++ parser, generates demo runs, parses them into JSONL, ingests
+them into SQLite, and prints the terminal regression report.
+
+Use `NUM_TESTS` to control tests per run and `NUM_RUNS` to control total runs.
+`run_001` is generated without injected changes, and `run_002...run_N` are
+generated with injected changes.
 
 To install Python dependencies and launch the local UI:
 
@@ -42,7 +46,7 @@ http://localhost:8501
 
 ## What VerifCore Answers
 
-VerifCore compares two regression runs and helps answer questions such as:
+VerifCore compares regression runs and helps answer questions such as:
 
 * Which tests are newly failing?
 * Which tests were fixed?
@@ -52,6 +56,8 @@ VerifCore compares two regression runs and helps answer questions such as:
 * Which failures came from a specific suite or worker?
 * Which assertion or failure type is involved?
 * Which compared tests changed cycles by at least a chosen percentage?
+* How does one reference run compare against selected other runs?
+* Which compared run introduced the most new failures or slowdowns?
 
 The UI exposes these as a query form backed by parameterized SQL, not natural
 language.
@@ -233,7 +239,7 @@ The ingestion layer stores parsed records in SQLite.
 python3 -m backend.ingest \
   --db verifcore.db \
   --run-name run_001 \
-  --commit abc123 \
+  --commit commit_001 \
   parsed/run_001.jsonl
 ```
 
@@ -381,7 +387,7 @@ expected_cycles
 utilization
 ```
 
-The main comparison query is a self-join through stable test identity:
+The pairwise comparison query is a self-join through stable test identity:
 
 ```sql
 WITH regression_comparison AS (
@@ -399,17 +405,27 @@ WITH regression_comparison AS (
 `backend/triage_sql.py` builds parameterized SQL queries over that comparison
 relation. The UI does not concatenate user text into SQL.
 
-Supported query kinds:
+For run-level history, `compare_run_to_many` compares one reference run against
+selected other runs and returns one summary row per compared run:
+
+```text
+compared_run | commit_hash | created_at | compared_tests | new_failures | fixed_tests | still_failing | slower_tests | infra_failures
+```
+
+This is where `runs.commit_hash` and `runs.created_at` become useful: they make
+each compared run identifiable and sortable as part of a run history.
+
+Supported pairwise query kinds:
 
 | UI question | Meaning |
 | --- | --- |
-| `New failures` | Baseline passed, current failed |
-| `Current failures` | Current result is `FAIL` |
-| `Fixed tests` | Baseline failed, current passed |
-| `Still failing` | Failed in both baseline and current |
-| `Slowed down` | Current cycles increased enough versus baseline |
-| `Failures with VCDs` | Current failures that have a VCD path |
-| `All compared tests` | All baseline/current matched tests |
+| `New failures` | Reference run passed, compared run failed |
+| `Current failures` | Compared result is `FAIL` |
+| `Fixed tests` | Reference run failed, compared run passed |
+| `Still failing` | Failed in both reference and compared runs |
+| `Slowed down` | Compared cycles increased enough versus reference |
+| `Failures with VCDs` | Compared-run failures that have a VCD path |
+| `All compared tests` | All matched tests between the two runs |
 
 Supported filters:
 
@@ -422,7 +438,7 @@ Supported filters:
 | `Minimum cycle change %` | Float from `-100` to `100`; blank means no filter |
 | `Row limit` | Limits returned rows |
 
-The result table keeps `seed` as its own column:
+The pairwise result table keeps `seed` as its own column:
 
 ```text
 suite | test | seed | baseline | current | failure | cycle change % | worker | vcd
@@ -440,11 +456,18 @@ make ui
 
 The page has:
 
-* baseline/current run selection
+* reference-run selection
+* a `Compare to` multiselect
 * query-aware metrics above the form
-* a query selector
-* filters for suite, worker, failure type, assertion, and cycle change
-* a results table
+* pairwise query filters for suite, worker, failure type, assertion, and cycle change
+* result tables backed by parameterized SQL
+
+The `Compare to` selection controls the view:
+
+| Selection | UI behavior |
+| --- | --- |
+| One compared run | Show the detailed pairwise query builder |
+| Multiple compared runs | Show one summary row per compared run |
 
 The top metrics update with the active query and filters:
 
@@ -475,6 +498,16 @@ Minimum cycle change %: 20
 Question: Failures with VCDs
 Suite: cache
 ```
+
+Example run-history query:
+
+```text
+Reference run: run_002
+Compare to: run_003, run_004
+```
+
+This produces one row per selected compared run, including commit hash, created time, new
+failures, fixed tests, still-failing tests, slower tests, and infra failures.
 
 ## Terminal Analyzer
 
@@ -525,6 +558,7 @@ Useful targets:
 make build                # compile C++ parser
 make generate-baseline    # create sample_logs/run_001.log
 make generate-regression  # create sample_logs/run_002.log with injected changes
+make generate-runs        # create run_001 through run_N using NUM_RUNS
 make parse                # convert logs to parsed/*.jsonl
 make ingest               # load parsed JSONL into verifcore.db
 make analyze              # print terminal report
@@ -534,10 +568,20 @@ make demo                 # clean -> build -> generate -> parse -> ingest -> ana
 make clean                # remove generated demo artifacts
 ```
 
-Generation defaults to 200 tests per run. Override with:
+Generation defaults to 200 tests per run and 2 total runs. Override with:
 
 ```bash
 make demo NUM_TESTS=1000
+make demo NUM_TESTS=200 NUM_RUNS=4
+```
+
+With `NUM_RUNS=4`, VerifCore creates:
+
+```text
+run_001  commit_001  reference-style run
+run_002  commit_002  compared run with injected changes
+run_003  commit_003  compared run with injected changes
+run_004  commit_004  compared run with injected changes
 ```
 
 `make clean` removes generated files only:
@@ -557,19 +601,22 @@ It intentionally keeps `sample_logs/manual.log`.
 # Build parser
 g++ -std=c++17 -Wall -Wextra -O2 cpp/*.cc -o log_parser
 
-# Generate logs
+# Generate logs. Repeat the injected command with more seeds for more runs.
 python3 -m backend.generate_logs --out sample_logs/run_001.log --seed 1 --num-tests 200
 python3 -m backend.generate_logs --out sample_logs/run_002.log --seed 2 --num-tests 200 --inject-regressions
+python3 -m backend.generate_logs --out sample_logs/run_003.log --seed 3 --num-tests 200 --inject-regressions
 
 # Parse logs
 mkdir -p parsed
 ./log_parser sample_logs/run_001.log > parsed/run_001.jsonl
 ./log_parser sample_logs/run_002.log > parsed/run_002.jsonl
+./log_parser sample_logs/run_003.log > parsed/run_003.jsonl
 
 # Ingest into SQLite
 rm -f verifcore.db
-python3 -m backend.ingest --db verifcore.db --run-name run_001 --commit abc123 parsed/run_001.jsonl
-python3 -m backend.ingest --db verifcore.db --run-name run_002 --commit def456 parsed/run_002.jsonl
+python3 -m backend.ingest --db verifcore.db --run-name run_001 --commit commit_001 parsed/run_001.jsonl
+python3 -m backend.ingest --db verifcore.db --run-name run_002 --commit commit_002 parsed/run_002.jsonl
+python3 -m backend.ingest --db verifcore.db --run-name run_003 --commit commit_003 parsed/run_003.jsonl
 
 # Analyze
 python3 -m backend.analyze --db verifcore.db --baseline run_001 --current run_002
