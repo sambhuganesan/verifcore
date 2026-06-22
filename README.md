@@ -290,7 +290,7 @@ are simple queryable fields in this project.
 
 ### Example Table Shape
 
-![VerifCore database schema example](docs/database_schema.svg)
+Add database schema diagram here.
 
 For the default demo of four runs with 1000 tests each:
 
