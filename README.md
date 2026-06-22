@@ -4,8 +4,8 @@ VerifCore is a small C++/Python/SQLite project inspired by design verification
 regression tooling.
 
 The project takes synthetic DV-style regression logs, parses them into JSONL,
-stores them in a normalized SQLite schema, and lets engineers compare baseline
-and current runs through SQL-backed triage queries.
+stores them in a normalized SQLite schema, and lets engineers compare one
+reference run against one or more other runs through SQL-backed triage queries.
 
 The goal is not to build a chatbot or a production DV platform. The goal is to
 show the core infrastructure pattern:
@@ -25,9 +25,15 @@ make demo
 This builds the C++ parser, generates demo runs, parses them into JSONL, ingests
 them into SQLite, and prints the terminal regression report.
 
+With no overrides, `make demo` uses `NUM_TESTS=1000` and `NUM_RUNS=4`. That
+creates `run_001` through `run_004`, each with 1000 tests, for 4000 total
+`test_results` rows. `run_001` is generated without injected changes, and
+`run_002...run_004` are generated with injected changes. The terminal report
+compares `run_001` against `run_002`.
+
 Use `NUM_TESTS` to control tests per run and `NUM_RUNS` to control total runs.
-`run_001` is generated without injected changes, and `run_002...run_N` are
-generated with injected changes.
+When `NUM_RUNS` is greater than 2, `run_002...run_N` are generated with
+injected changes.
 
 To install Python dependencies and launch the local UI:
 
@@ -52,7 +58,7 @@ VerifCore compares regression runs and helps answer questions such as:
 * Which tests were fixed?
 * Which tests are still failing?
 * Which tests slowed down?
-* Which current failures have VCD paths?
+* Which compared-run failures have VCD paths?
 * Which failures came from a specific suite or worker?
 * Which assertion or failure type is involved?
 * Which compared tests changed cycles by at least a chosen percentage?
@@ -348,12 +354,12 @@ CREATE TABLE test_results (
 );
 ```
 
-For two runs of 200 tests each:
+For the default demo of four runs with 1000 tests each:
 
 ```text
-runs:                 2 rows
-test_cases:         200 rows
-test_results:       400 rows
+runs:                 4 rows
+test_cases:        1000 rows
+test_results:      4000 rows
 failure_signatures: reused debug buckets
 ```
 
@@ -431,14 +437,16 @@ Supported filters:
 
 | Filter | Notes |
 | --- | --- |
-| `Suite` | Values come from current run data |
-| `Worker` | Values come from current run data |
-| `Failure type` | Values come from current failures |
-| `Assertion` | Values come from current failures |
+| `Suite` | Values come from the compared run |
+| `Worker` | Values come from the compared run |
+| `Failure type` | Values come from compared-run failures |
+| `Assertion` | Values come from compared-run failures |
 | `Minimum cycle change %` | Float from `-100` to `100`; blank means no filter |
 | `Row limit` | Limits returned rows |
 
-The pairwise result table keeps `seed` as its own column:
+The pairwise result table keeps `seed` as its own column. In this table,
+`baseline` means the selected reference run and `current` means the selected
+compared run:
 
 ```text
 suite | test | seed | baseline | current | failure | cycle change % | worker | vcd
@@ -536,8 +544,8 @@ Example output:
 ```text
 VerifCore Regression Report
 ===========================
-Baseline run_001: 200 tests
-Current  run_002: 200 tests
+Baseline run_001: 1000 tests
+Current  run_002: 1000 tests
 
 Summary
 -------
@@ -568,11 +576,17 @@ make demo                 # clean -> build -> generate -> parse -> ingest -> ana
 make clean                # remove generated demo artifacts
 ```
 
-Generation defaults to 200 tests per run and 2 total runs. Override with:
+`make demo` with no overrides is equivalent to:
 
 ```bash
-make demo NUM_TESTS=1000
-make demo NUM_TESTS=200 NUM_RUNS=4
+make demo NUM_TESTS=1000 NUM_RUNS=4
+```
+
+That default creates four runs and 4000 total `test_results` rows. Override with:
+
+```bash
+make demo NUM_TESTS=200 NUM_RUNS=2
+make demo NUM_TESTS=500 NUM_RUNS=6
 ```
 
 With `NUM_RUNS=4`, VerifCore creates:
@@ -622,7 +636,7 @@ python3 -m backend.ingest --db verifcore.db --run-name run_003 --commit commit_0
 python3 -m backend.analyze --db verifcore.db --baseline run_001 --current run_002
 
 # Test
-python3 -m pytest tests
+.venv/bin/python -m pytest tests
 
 # UI
 .venv/bin/python -m streamlit run ui/app.py --server.headless true
@@ -633,7 +647,7 @@ python3 -m pytest tests
 Run:
 
 ```bash
-python3 -m pytest tests
+.venv/bin/python -m pytest tests
 ```
 
 The tests cover:
@@ -643,6 +657,7 @@ The tests cover:
 * failure signature grouping
 * normalized schema uniqueness
 * SQL comparison rows
+* one-reference-to-many-runs comparison summaries
 * query filtering by suite, worker, failure type, assertion, and cycle change
 * queryable filter value discovery
 * rejection of unsupported query kinds

@@ -2,8 +2,8 @@ CXX ?= g++
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -O2
 PYTHON ?= python3
 STREAMLIT_PYTHON ?= .venv/bin/python
-NUM_TESTS ?= 200
-NUM_RUNS ?= 2
+NUM_TESTS ?= 1000
+NUM_RUNS ?= 4
 
 CPP_SRCS := $(sort $(wildcard cpp/*.cc))
 LOG_PARSER := log_parser
