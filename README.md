@@ -1,14 +1,8 @@
 # VerifCore
 
-VerifCore is a small C++/Python/SQLite project inspired by design verification
-regression tooling.
+VerifCore is a small C++/Python/SQLite project inspired by design verification regression tooling.
 
-The project takes synthetic DV-style regression logs, parses them into JSONL,
-stores them in a normalized SQLite schema, and lets engineers compare one
-reference run against one or more other runs through SQL-backed triage queries.
-
-The goal is not to build a chatbot or a production DV platform. The goal is to
-show the core infrastructure pattern:
+The project takes synthetic DV-style regression logs, parses them into JSONL, stores them in a normalized SQLite schema, and lets us compare one reference run against one or more other runs through SQL-backed triage queries.
 
 ```text
 raw logs -> structured records -> relational database -> SQL triage UI
@@ -17,8 +11,7 @@ raw logs -> structured records -> relational database -> SQL triage UI
 ## Quick Start
 
 The intended public demo is a hosted Streamlit app with a preloaded SQLite
-database. Visitors should be able to open one link and immediately compare four
-synthetic regression runs with 1000 tests each.
+database. 
 
 Live demo:
 
@@ -32,8 +25,7 @@ The hosted app loads:
 data/verifcore_demo.db
 ```
 
-That database is checked into the repo so the UI can run without compiling the
-C++ parser or generating logs at startup.
+That database is checked into the repo so the UI can run without compiling the C++ parser or generating logs at startup.
 
 From the `verifcore/` directory:
 
@@ -41,11 +33,9 @@ From the `verifcore/` directory:
 make demo
 ```
 
-This builds the C++ parser, generates demo runs, parses them into JSONL, ingests
-them into SQLite, and prints the terminal regression report.
+This builds the C++ parser, generates demo runs, parses them into JSONL, ingests them into SQLite, and prints the terminal regression report.
 
-With no overrides, `make demo` uses `NUM_TESTS=1000` and `NUM_RUNS=4`. That
-creates `run_001` through `run_004`, each with 1000 tests, for 4000 total
+With no overrides, `make demo` uses `NUM_TESTS=1000` and `NUM_RUNS=4`. That creates `run_001` through `run_004`, each with 1000 tests, for 4000 total
 `test_results` rows. `run_001` is generated without injected changes, and
 `run_002...run_004` are generated with injected changes. The terminal report
 compares `run_001` against `run_002`.
@@ -84,8 +74,7 @@ VerifCore compares regression runs and helps answer questions such as:
 * How does one reference run compare against selected other runs?
 * Which compared run introduced the most new failures or slowdowns?
 
-The UI exposes these as a query form backed by parameterized SQL, not natural
-language.
+The UI exposes these as a query form backed by parameterized SQL.
 
 ## High-Level Pipeline
 
@@ -290,14 +279,6 @@ failure_signatures
 test_results
 ```
 
-Relationship model:
-
-```text
-runs 1 ─── * test_results * ─── 1 test_cases
-                  |
-                  * ─── 0/1 failure_signatures
-```
-
 `test_results` is the central fact table. Each row means:
 
 ```text
@@ -307,73 +288,48 @@ in this run, this stable test case produced this result
 Worker name and VCD path stay directly on `test_results` for now because they
 are simple queryable fields in this project.
 
-### `runs`
+### Example Table Shape
 
-```sql
-CREATE TABLE runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_name TEXT NOT NULL UNIQUE,
-    commit_hash TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
+`runs`
+
+| id | run_name | commit_hash | created_at |
+| --- | --- | --- | --- |
+| 1 | run_001 | commit_001 | 2026-06-21T00:00:00 |
+| 2 | run_002 | commit_002 | 2026-06-21T00:01:00 |
+| ... | ... | ... | ... |
+
+```text
+runs.id 1 ─── * test_results.run_id
 ```
 
-### `test_cases`
+`test_results`
 
-```sql
-CREATE TABLE test_cases (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    suite TEXT NOT NULL,
-    test_name TEXT NOT NULL,
-    seed INTEGER NOT NULL,
-    test_family TEXT NOT NULL,
-    UNIQUE(suite, test_name, seed)
-);
+| id | run_id | test_case_id | worker_name | status | failure_signature_id | cycles | expected_cycles | vcd_path |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 | 42 | worker-1 | PASS | none | 684 | 700 | none |
+| 2 | 2 | 42 | worker-3 | FAIL | 7 | 915 | 700 | waves/dma_aligned_burst_0_seed1000.vcd |
+| ... | ... | ... | ... | ... | ... | ... | ... | ... |
+
+```text
+test_cases.id 1 ─── * test_results.test_case_id
+failure_signatures.id 1 ─── * test_results.failure_signature_id
 ```
 
-### `failure_signatures`
+`test_cases`
 
-```sql
-CREATE TABLE failure_signatures (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    failure_type TEXT NOT NULL,
-    assertion_name TEXT NOT NULL,
-    UNIQUE(failure_type, assertion_name)
-);
-```
+| id | suite | test_name | seed | test_family |
+| --- | --- | --- | --- | --- |
+| 42 | dma | aligned_burst_0 | 1000 | aligned_burst |
+| 43 | systolic_array | backpressure_13 | 1013 | backpressure |
+| ... | ... | ... | ... | ... |
 
-### `test_results`
+`failure_signatures`
 
-```sql
-CREATE TABLE test_results (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id INTEGER NOT NULL,
-    test_case_id INTEGER NOT NULL,
-    worker_name TEXT NOT NULL,
-    status TEXT NOT NULL,
-    failure_signature_id INTEGER,
-    cycles INTEGER NOT NULL,
-    expected_cycles INTEGER NOT NULL,
-    utilization REAL NOT NULL,
-    vcd_path TEXT,
-
-    FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE,
-    FOREIGN KEY(test_case_id) REFERENCES test_cases(id),
-    FOREIGN KEY(failure_signature_id) REFERENCES failure_signatures(id),
-
-    UNIQUE(run_id, test_case_id),
-
-    CHECK(status IN ('PASS', 'FAIL')),
-    CHECK(cycles >= 0),
-    CHECK(expected_cycles >= 0),
-    CHECK(utilization >= 0.0),
-    CHECK(
-        (status = 'PASS' AND failure_signature_id IS NULL)
-        OR
-        (status = 'FAIL' AND failure_signature_id IS NOT NULL)
-    )
-);
-```
+| id | failure_type | assertion_name |
+| --- | --- | --- |
+| 7 | ASSERTION_FAILED | valid_ready_protocol |
+| 8 | INFRA_FAILURE | sim_timeout |
+| ... | ... | ... |
 
 For the default demo of four runs with 1000 tests each:
 
