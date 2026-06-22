@@ -290,46 +290,7 @@ are simple queryable fields in this project.
 
 ### Example Table Shape
 
-`runs`
-
-| id | run_name | commit_hash | created_at |
-| --- | --- | --- | --- |
-| 1 | run_001 | commit_001 | 2026-06-21T00:00:00 |
-| 2 | run_002 | commit_002 | 2026-06-21T00:01:00 |
-| ... | ... | ... | ... |
-
-```text
-runs.id 1 ─── * test_results.run_id
-```
-
-`test_results`
-
-| id | run_id | test_case_id | worker_name | status | failure_signature_id | cycles | expected_cycles | vcd_path |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 1 | 42 | worker-1 | PASS | none | 684 | 700 | none |
-| 2 | 2 | 42 | worker-3 | FAIL | 7 | 915 | 700 | waves/dma_aligned_burst_0_seed1000.vcd |
-| ... | ... | ... | ... | ... | ... | ... | ... | ... |
-
-```text
-test_cases.id 1 ─── * test_results.test_case_id
-failure_signatures.id 1 ─── * test_results.failure_signature_id
-```
-
-`test_cases`
-
-| id | suite | test_name | seed | test_family |
-| --- | --- | --- | --- | --- |
-| 42 | dma | aligned_burst_0 | 1000 | aligned_burst |
-| 43 | systolic_array | backpressure_13 | 1013 | backpressure |
-| ... | ... | ... | ... | ... |
-
-`failure_signatures`
-
-| id | failure_type | assertion_name |
-| --- | --- | --- |
-| 7 | ASSERTION_FAILED | valid_ready_protocol |
-| 8 | INFRA_FAILURE | sim_timeout |
-| ... | ... | ... |
+![VerifCore database schema example](docs/database_schema.svg)
 
 For the default demo of four runs with 1000 tests each:
 
