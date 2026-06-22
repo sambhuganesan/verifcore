@@ -1,5 +1,8 @@
+import os
 from pathlib import Path
 import sys
+from urllib.parse import urlencode
+from uuid import uuid4
 
 import streamlit as st
 
@@ -12,6 +15,7 @@ from backend import db, triage_sql  # noqa: E402
 
 DEMO_DB_PATH = ROOT / "data" / "verifcore_demo.db"
 LOCAL_DB_PATH = ROOT / "verifcore.db"
+DEFAULT_GOATCOUNTER_CODE = "sganesan"
 QUERY_OPTIONS = {
     "New failures": "new_failures",
     "Current failures": "current_failures",
@@ -29,6 +33,53 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+
+def config_value(name):
+    if name in os.environ:
+        return os.environ[name]
+
+    try:
+        return st.secrets.get(name)
+    except FileNotFoundError:
+        return None
+
+
+def render_analytics_pixel():
+    goatcounter_code = config_value("GOATCOUNTER_CODE") or DEFAULT_GOATCOUNTER_CODE
+    if not goatcounter_code:
+        return
+
+    if st.session_state.get("analytics_tracked"):
+        return
+
+    st.session_state.analytics_tracked = True
+    st.session_state.analytics_event_id = str(uuid4())
+
+    params = urlencode(
+        {
+            "p": "/",
+            "t": "VerifCore",
+            "r": st.session_state.analytics_event_id,
+        }
+    )
+    src = f"https://{goatcounter_code}.goatcounter.com/count?{params}"
+    st.markdown(
+        f"""
+        <img
+            src="{src}"
+            alt=""
+            width="1"
+            height="1"
+            aria-hidden="true"
+            style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;opacity:0;"
+        />
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+render_analytics_pixel()
 
 
 st.markdown(

@@ -20,6 +20,12 @@ The intended public demo is a hosted Streamlit app with a preloaded SQLite
 database. Visitors should be able to open one link and immediately compare four
 synthetic regression runs with 1000 tests each.
 
+Live demo:
+
+```text
+https://verifcore.streamlit.app/
+```
+
 The hosted app loads:
 
 ```text
