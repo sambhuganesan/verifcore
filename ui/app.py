@@ -418,11 +418,7 @@ def main():
         else:
             st.caption("Dataset: local generated database")
 
-        db_path = str(default_path)
-        with st.expander("Advanced"):
-            db_path = st.text_input("SQLite database path", value=db_path)
-
-        db_file = Path(db_path)
+        db_file = Path(default_path)
         if not db_file.exists():
             st.error("Database not found. Run `make demo` locally or use the preloaded demo database.")
             return

@@ -307,7 +307,7 @@ JOIN test_cases
 LEFT JOIN failure_signatures
 ```
 
-It exposes convenient columns such as:
+It gives us convenient columns such as:
 
 ```text
 run_id
@@ -340,22 +340,24 @@ WITH regression_comparison AS (
 )
 ```
 
-`backend/triage_sql.py` builds parameterized SQL queries over that comparison
-relation. The UI does not concatenate user text into SQL.
-
-For run-level history, `compare_run_to_many` compares one reference run against
-selected other runs and returns one summary row per compared run:
+Here `b` is the baseline run and `c` is the compared run. The query joins
+`result_details` to itself so each output row pairs the same stable test
+identity from two runs:
 
 ```text
-compared_run | commit_hash | created_at | compared_tests | new_failures | fixed_tests | still_failing | slower_tests | infra_failures
+run_001 + dma.aligned_burst_0 seed=1000
+run_002 + dma.aligned_burst_0 seed=1000
 ```
 
-This is where `runs.commit_hash` and `runs.created_at` become useful: they make
-each compared run identifiable and sortable as part of a run history.
+That paired row is what lets VerifCore label a test as a new failure, fixed
+test, still failing test, slowdown, or improvement.
 
-Supported pairwise query kinds:
+`backend/triage_sql.py` builds parameterized SQL queries over that comparison
+relation. 
 
-| UI question | Meaning |
+The supported pairwise queries are:
+
+| Query | Meaning |
 | --- | --- |
 | `New failures` | Reference run passed, compared run failed |
 | `Current failures` | Compared result is `FAIL` |
@@ -394,10 +396,7 @@ data/verifcore_demo.db
 ```
 
 If that file is missing, the app falls back to the locally generated
-`verifcore.db`. The sidebar keeps the SQLite database path under an advanced
-control for local development.
-
-Start it with:
+`verifcore.db`. If you are not using the UI hosted link, start the UI with:
 
 ```bash
 make ui
@@ -499,6 +498,26 @@ Infra failures: 9
 status_changing: 26
 ```
 
+## Tests
+
+Run:
+
+```bash
+.venv/bin/python -m pytest tests
+```
+
+The tests cover:
+
+* pass/fail comparison categories
+* slowdown and improvement detection
+* failure signature grouping
+* normalized schema uniqueness
+* SQL comparison rows
+* one-reference-to-many-runs comparison summaries
+* query filtering by suite, worker, failure type, assertion, and cycle change
+* queryable filter value discovery
+* rejection of unsupported query kinds
+
 ## Makefile Workflow
 
 Useful targets:
@@ -554,20 +573,6 @@ It intentionally keeps `sample_logs/manual.log`.
 `make demo-db` refreshes the checked-in hosted demo database. It runs the normal
 demo flow, then copies `verifcore.db` to `data/verifcore_demo.db`.
 
-## Free Hosting
-
-The simplest free deployment path is Streamlit Community Cloud:
-
-```text
-Repository: this repo on GitHub
-Entrypoint: ui/app.py
-Dependencies: requirements.txt
-Demo data: data/verifcore_demo.db
-```
-
-After deployment, the public README can include the hosted URL and a GIF showing
-the run selector, query filters, and result table.
-
 ## Manual Workflow
 
 ```bash
@@ -601,25 +606,6 @@ python3 -m backend.analyze --db verifcore.db --baseline run_001 --current run_00
 .venv/bin/python -m streamlit run ui/app.py --server.headless true
 ```
 
-## Tests
-
-Run:
-
-```bash
-.venv/bin/python -m pytest tests
-```
-
-The tests cover:
-
-* pass/fail comparison categories
-* slowdown and improvement detection
-* failure signature grouping
-* normalized schema uniqueness
-* SQL comparison rows
-* one-reference-to-many-runs comparison summaries
-* query filtering by suite, worker, failure type, assertion, and cycle change
-* queryable filter value discovery
-* rejection of unsupported query kinds
 
 ## Current Limitations
 
@@ -633,19 +619,26 @@ Current limitations:
 * Failure types and assertions are synthetic.
 * Cycle counts are generated, not measured from real simulation.
 * `status_changing` is approximate because true flakiness requires repeated runs under the same commit/configuration.
-* The UI is local-only.
-* The query UI is controlled filters, not natural-language search.
 
 ## Future Work
 
-Possible extensions:
+The next useful extensions would be:
 
-* Add historical trend queries across many runs.
-* Add branch, author, simulator version, or machine metadata.
-* Add export to CSV or HTML reports.
-* Add clickable artifact handling for real VCD/log paths.
-* Add richer grouping queries for suite, assertion, worker, and test family.
-* Add a true flakiness model using repeated runs under the same commit.
+* **Real log adapters:** keep the C++ parser interface, but add adapters for
+  simulator-specific logs instead of only the synthetic teaching format.
+* **Artifact indexing:** replace fake VCD paths with real log/waveform artifact
+  metadata, including existence checks, file size, and a stable URI for opening
+  the debug artifact from the UI.
+* **Run metadata:** store branch, commit, author, simulator version, testlist,
+  seed policy, and machine pool so comparisons can explain why two runs differ.
+* **Flakiness model:** distinguish real regressions from nondeterministic tests
+  by grouping repeated runs under the same commit and environment.
+* **Historical trends:** promote the pairwise comparison layer into trend
+  queries that show when a failure signature first appeared, disappeared, or
+  changed frequency over time.
+* **Scale path:** move from local SQLite to a server-backed database when result
+  volume grows beyond a laptop-sized demo, while keeping the same normalized
+  fact-table model.
 
 ## Summary
 
