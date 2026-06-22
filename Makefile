@@ -8,8 +8,9 @@ NUM_RUNS ?= 4
 CPP_SRCS := $(sort $(wildcard cpp/*.cc))
 LOG_PARSER := log_parser
 DB := verifcore.db
+DEMO_DB := data/verifcore_demo.db
 
-.PHONY: build generate-baseline generate-regression generate-runs parse ingest analyze test ui demo clean
+.PHONY: build generate-baseline generate-regression generate-runs parse ingest analyze test ui demo demo-db clean
 
 build:
 	$(CXX) $(CXXFLAGS) $(CPP_SRCS) -o $(LOG_PARSER)
@@ -62,6 +63,10 @@ demo:
 	$(MAKE) parse NUM_RUNS=$(NUM_RUNS)
 	$(MAKE) ingest NUM_RUNS=$(NUM_RUNS)
 	$(MAKE) analyze
+
+demo-db: demo
+	mkdir -p data
+	cp $(DB) $(DEMO_DB)
 
 clean:
 	rm -f $(LOG_PARSER)

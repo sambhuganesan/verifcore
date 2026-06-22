@@ -16,6 +16,19 @@ raw logs -> structured records -> relational database -> SQL triage UI
 
 ## Quick Start
 
+The intended public demo is a hosted Streamlit app with a preloaded SQLite
+database. Visitors should be able to open one link and immediately compare four
+synthetic regression runs with 1000 tests each.
+
+The hosted app loads:
+
+```text
+data/verifcore_demo.db
+```
+
+That database is checked into the repo so the UI can run without compiling the
+C++ parser or generating logs at startup.
+
 From the `verifcore/` directory:
 
 ```bash
@@ -102,6 +115,8 @@ verifcore/
 │   ├── ingest.py
 │   ├── analyze.py
 │   └── triage_sql.py
+├── data/
+│   └── verifcore_demo.db
 ├── docs/
 │   └── sql_regression_model.md
 ├── ui/
@@ -454,7 +469,16 @@ suite | test | seed | baseline | current | failure | cycle change % | worker | v
 
 ## Streamlit UI
 
-The UI is a local SQL-backed query surface on top of `verifcore.db`.
+The UI is a SQL-backed query surface. By default, it loads the prebuilt demo
+database:
+
+```text
+data/verifcore_demo.db
+```
+
+If that file is missing, the app falls back to the locally generated
+`verifcore.db`. The sidebar keeps the SQLite database path under an advanced
+control for local development.
 
 Start it with:
 
@@ -573,6 +597,7 @@ make analyze              # print terminal report
 make test                 # run pytest tests
 make ui                   # start Streamlit UI
 make demo                 # clean -> build -> generate -> parse -> ingest -> analyze
+make demo-db              # regenerate data/verifcore_demo.db
 make clean                # remove generated demo artifacts
 ```
 
@@ -608,6 +633,23 @@ sample_logs/run_*.log
 ```
 
 It intentionally keeps `sample_logs/manual.log`.
+
+`make demo-db` refreshes the checked-in hosted demo database. It runs the normal
+demo flow, then copies `verifcore.db` to `data/verifcore_demo.db`.
+
+## Free Hosting
+
+The simplest free deployment path is Streamlit Community Cloud:
+
+```text
+Repository: this repo on GitHub
+Entrypoint: ui/app.py
+Dependencies: requirements.txt
+Demo data: data/verifcore_demo.db
+```
+
+After deployment, the public README can include the hosted URL and a GIF showing
+the run selector, query filters, and result table.
 
 ## Manual Workflow
 

@@ -10,7 +10,8 @@ if str(ROOT) not in sys.path:
 from backend import db, triage_sql  # noqa: E402
 
 
-DEFAULT_DB_PATH = ROOT / "verifcore.db"
+DEMO_DB_PATH = ROOT / "data" / "verifcore_demo.db"
+LOCAL_DB_PATH = ROOT / "verifcore.db"
 QUERY_OPTIONS = {
     "New failures": "new_failures",
     "Current failures": "current_failures",
@@ -177,6 +178,12 @@ def count_results(conn, run_id):
         """,
         (run_id,),
     ).fetchone()["result_count"]
+
+
+def default_db_path():
+    if DEMO_DB_PATH.exists():
+        return DEMO_DB_PATH
+    return LOCAL_DB_PATH
 
 
 def metric_grid(rows):
@@ -354,11 +361,19 @@ def main():
 
     with st.sidebar:
         st.header("Runs")
-        db_path = st.text_input("Database path", value=str(DEFAULT_DB_PATH))
+        default_path = default_db_path()
+        if default_path == DEMO_DB_PATH:
+            st.caption("Dataset: preloaded demo database")
+        else:
+            st.caption("Dataset: local generated database")
+
+        db_path = str(default_path)
+        with st.expander("Advanced"):
+            db_path = st.text_input("SQLite database path", value=db_path)
 
         db_file = Path(db_path)
         if not db_file.exists():
-            st.error("Database not found. Run `make demo` from `verifcore` first.")
+            st.error("Database not found. Run `make demo` locally or use the preloaded demo database.")
             return
 
         runs = load_runs(str(db_file))
