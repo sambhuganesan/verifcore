@@ -361,7 +361,22 @@ verifcore.db
 
 ## Database schema
 
-VerifCore uses two tables: `runs` and `results`.
+VerifCore uses a small normalized schema for regression analysis:
+
+```text
+runs 1 ─── * test_results * ─── 1 test_cases
+                  |
+                  * ─── 0/1 failure_signatures
+```
+
+`test_results` is the central fact table. Each row says:
+
+```text
+in this run, this stable test case produced this result
+```
+
+Worker name and VCD path stay directly on `test_results` for now because they
+are simple queryable fields in the current project.
 
 ### `runs`
 
@@ -383,35 +398,107 @@ Example:
 |  1 | run_001  | abc123      | timestamp  |
 |  2 | run_002  | def456      | timestamp  |
 
-### `results`
+### `test_cases`
+
+One row per stable logical test identity.
+
+```sql
+CREATE TABLE test_cases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    suite TEXT NOT NULL,
+    test_name TEXT NOT NULL,
+    seed INTEGER NOT NULL,
+    test_family TEXT NOT NULL,
+    UNIQUE(suite, test_name, seed)
+);
+```
+
+The stable test identity is:
+
+```text
+suite + test_name + seed
+```
+
+That identity is what lets VerifCore compare the same logical test across
+multiple regression runs.
+
+### `failure_signatures`
+
+One row per reusable failure signature.
+
+```sql
+CREATE TABLE failure_signatures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    failure_type TEXT NOT NULL,
+    assertion_name TEXT NOT NULL,
+    UNIQUE(failure_type, assertion_name)
+);
+```
+
+Examples:
+
+| failure_type     | assertion_name       |
+| ---------------- | -------------------- |
+| ASSERTION_FAILED | valid_ready_protocol |
+| ASSERTION_FAILED | packet_ordering      |
+| INFRA_FAILURE    | sim_timeout          |
+
+Passing tests have no failure signature.
+
+### `test_results`
 
 One row per test result.
 
 ```sql
-CREATE TABLE results (
+CREATE TABLE test_results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+
     run_id INTEGER NOT NULL,
-    suite TEXT NOT NULL,
-    test_name TEXT NOT NULL,
-    seed INTEGER NOT NULL,
-    worker_id TEXT NOT NULL,
+    test_case_id INTEGER NOT NULL,
+
+    worker_name TEXT NOT NULL,
+
     status TEXT NOT NULL,
-    failure_type TEXT,
-    assertion_name TEXT,
-    artifact_path TEXT,
+    failure_signature_id INTEGER,
+
     cycles INTEGER NOT NULL,
     expected_cycles INTEGER NOT NULL,
     utilization REAL NOT NULL,
-    FOREIGN KEY(run_id) REFERENCES runs(id)
+
+    vcd_path TEXT,
+
+    FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE,
+    FOREIGN KEY(test_case_id) REFERENCES test_cases(id),
+    FOREIGN KEY(failure_signature_id) REFERENCES failure_signatures(id),
+
+    UNIQUE(run_id, test_case_id),
+
+    CHECK(status IN ('PASS', 'FAIL')),
+    CHECK(cycles >= 0),
+    CHECK(expected_cycles >= 0),
+    CHECK(utilization >= 0.0),
+    CHECK(
+        (status = 'PASS' AND failure_signature_id IS NULL)
+        OR
+        (status = 'FAIL' AND failure_signature_id IS NOT NULL)
+    )
 );
 ```
 
 So for example, with two runs of 200 tests each, the database contains:
 
 ```text
-runs:    2 rows
-results: 400 rows
+runs:               2 rows
+test_cases:       200 rows
+test_results:     400 rows
+failure_signatures: reused debug buckets
 ```
+
+The analyzer reads through a flattened SQL view named `result_details`, which
+joins `test_results`, `test_cases`, and `failure_signatures`. This keeps the
+storage normalized while giving analysis code convenient columns such as
+`suite`, `test_name`, `status`, `failure_type`, `assertion_name`, and
+`vcd_path`.
 
 ---
 

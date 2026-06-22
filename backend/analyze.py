@@ -27,7 +27,7 @@ def count_results(conn, run_id):
     cur.execute(
         """
         SELECT COUNT(*)
-        FROM results
+        FROM test_results
         WHERE run_id = ?
         """,
         (run_id,),
@@ -53,7 +53,7 @@ def load_results(conn, run_id):
             cycles,
             expected_cycles,
             utilization
-        FROM results
+        FROM result_details
         WHERE run_id = ?
         """,
         (run_id,),
@@ -160,7 +160,7 @@ def get_flaky_tests(conn):
             seed,
             GROUP_CONCAT(DISTINCT status) AS statuses,
             COUNT(*) AS observations
-        FROM results
+        FROM result_details
         GROUP BY suite, test_name, seed
         HAVING COUNT(DISTINCT status) > 1
         ORDER BY suite, test_name, seed
