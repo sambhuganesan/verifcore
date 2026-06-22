@@ -76,6 +76,17 @@ is_infra_failure
 """
 
 
+QUERY_KINDS = {
+    "all": "All compared tests",
+    "new_failures": "New failures",
+    "current_failures": "Current failures",
+    "fixed": "Fixed tests",
+    "still_failing": "Still failing",
+    "slowed_down": "Slowed down",
+    "vcds": "Failures with VCDs",
+}
+
+
 def fetch_comparison_rows(conn, baseline_run_id, current_run_id):
     conn.row_factory = _row_factory(conn.row_factory)
     cur = conn.cursor()
@@ -89,6 +100,141 @@ def fetch_comparison_rows(conn, baseline_run_id, current_run_id):
         (baseline_run_id, current_run_id),
     )
     return [dict(row) for row in cur.fetchall()]
+
+
+def query_comparison(
+    conn,
+    baseline_run_id,
+    current_run_id,
+    query_kind="all",
+    suite=None,
+    worker=None,
+    failure_type=None,
+    assertion=None,
+    min_cycle_change_pct=None,
+    limit=200,
+):
+    if query_kind not in QUERY_KINDS:
+        raise ValueError(f"Unsupported query kind: {query_kind}")
+
+    conn.row_factory = _row_factory(conn.row_factory)
+    where_clauses = []
+    params = [baseline_run_id, current_run_id]
+
+    if query_kind == "new_failures":
+        where_clauses.append("status_change_type = 'new_failure'")
+    elif query_kind == "current_failures":
+        where_clauses.append("current_status = 'FAIL'")
+    elif query_kind == "fixed":
+        where_clauses.append("status_change_type = 'fixed'")
+    elif query_kind == "still_failing":
+        where_clauses.append("status_change_type = 'still_failing'")
+    elif query_kind == "slowed_down":
+        where_clauses.append("perf_change_type = 'perf_regression'")
+    elif query_kind == "vcds":
+        where_clauses.append("current_status = 'FAIL'")
+        where_clauses.append("artifact_path IS NOT NULL")
+
+    if suite:
+        where_clauses.append("suite = ?")
+        params.append(suite)
+
+    if worker:
+        where_clauses.append("current_worker_id = ?")
+        params.append(worker)
+
+    if failure_type:
+        where_clauses.append("failure_type = ?")
+        params.append(failure_type)
+
+    if assertion:
+        where_clauses.append("assertion_name = ?")
+        params.append(assertion)
+
+    if min_cycle_change_pct is not None:
+        where_clauses.append("cycle_change_pct >= ?")
+        params.append(min_cycle_change_pct)
+
+    where_sql = ""
+    if where_clauses:
+        where_sql = "WHERE " + " AND ".join(where_clauses)
+
+    order_sql = "ORDER BY suite, test_name, seed"
+    if query_kind == "slowed_down" or min_cycle_change_pct is not None:
+        order_sql = "ORDER BY cycle_change_pct DESC, suite, test_name, seed"
+
+    params.append(limit)
+
+    cur = conn.cursor()
+    cur.execute(
+        COMPARISON_CTE
+        + f"""
+        SELECT {COMPARISON_COLUMNS}
+        FROM regression_comparison
+        {where_sql}
+        {order_sql}
+        LIMIT ?
+        """,
+        params,
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def filter_values(conn, current_run_id):
+    conn.row_factory = _row_factory(conn.row_factory)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT DISTINCT suite
+        FROM result_details
+        WHERE run_id = ?
+        ORDER BY suite
+        """,
+        (current_run_id,),
+    )
+    suites = [row["suite"] for row in cur.fetchall()]
+
+    cur.execute(
+        """
+        SELECT DISTINCT worker_name
+        FROM result_details
+        WHERE run_id = ?
+        ORDER BY worker_name
+        """,
+        (current_run_id,),
+    )
+    workers = [row["worker_name"] for row in cur.fetchall()]
+
+    cur.execute(
+        """
+        SELECT DISTINCT failure_type
+        FROM result_details
+        WHERE run_id = ?
+          AND failure_type != 'none'
+        ORDER BY failure_type
+        """,
+        (current_run_id,),
+    )
+    failure_types = [row["failure_type"] for row in cur.fetchall()]
+
+    cur.execute(
+        """
+        SELECT DISTINCT assertion_name
+        FROM result_details
+        WHERE run_id = ?
+          AND assertion_name != 'none'
+        ORDER BY assertion_name
+        """,
+        (current_run_id,),
+    )
+    assertions = [row["assertion_name"] for row in cur.fetchall()]
+
+    return {
+        "suites": suites,
+        "workers": workers,
+        "failure_types": failure_types,
+        "assertions": assertions,
+    }
 
 
 def summarize_comparison(conn, baseline_run_id, current_run_id):
@@ -128,6 +274,122 @@ def top_failure_signatures(conn, baseline_run_id, current_run_id, limit=10):
         LIMIT ?
         """,
         (baseline_run_id, current_run_id, limit),
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def new_failures(conn, baseline_run_id, current_run_id, limit=100):
+    conn.row_factory = _row_factory(conn.row_factory)
+    cur = conn.cursor()
+    cur.execute(
+        COMPARISON_CTE
+        + f"""
+        SELECT {COMPARISON_COLUMNS}
+        FROM regression_comparison
+        WHERE status_change_type = 'new_failure'
+        ORDER BY suite, test_name, seed
+        LIMIT ?
+        """,
+        (baseline_run_id, current_run_id, limit),
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def worst_perf_regressions(conn, baseline_run_id, current_run_id, limit=25):
+    conn.row_factory = _row_factory(conn.row_factory)
+    cur = conn.cursor()
+    cur.execute(
+        COMPARISON_CTE
+        + f"""
+        SELECT {COMPARISON_COLUMNS}
+        FROM regression_comparison
+        WHERE perf_change_type = 'perf_regression'
+        ORDER BY cycle_change_pct DESC, suite, test_name, seed
+        LIMIT ?
+        """,
+        (baseline_run_id, current_run_id, limit),
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def current_failures_by_worker(conn, current_run_id, suite=None):
+    conn.row_factory = _row_factory(conn.row_factory)
+    params = [current_run_id]
+    suite_filter = ""
+    if suite:
+        suite_filter = "AND suite = ?"
+        params.append(suite)
+
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        SELECT
+            worker_name,
+            COUNT(*) AS total_tests,
+            SUM(status = 'FAIL') AS failed_tests,
+            ROUND(SUM(status = 'FAIL') * 100.0 / COUNT(*), 1)
+                AS failure_rate_pct,
+            SUM(failure_type = 'INFRA_FAILURE') AS infra_failures,
+            SUM(failure_type = 'ASSERTION_FAILED') AS assertion_failures
+        FROM result_details
+        WHERE run_id = ?
+          {suite_filter}
+        GROUP BY worker_name
+        ORDER BY failed_tests DESC, failure_rate_pct DESC, worker_name ASC
+        """,
+        params,
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def failed_test_vcds(conn, current_run_id, limit=200):
+    conn.row_factory = _row_factory(conn.row_factory)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT
+            suite,
+            test_name,
+            seed,
+            worker_name,
+            failure_type,
+            assertion_name,
+            vcd_path
+        FROM result_details
+        WHERE run_id = ?
+          AND status = 'FAIL'
+          AND vcd_path IS NOT NULL
+        ORDER BY suite, test_name, seed
+        LIMIT ?
+        """,
+        (current_run_id, limit),
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def current_failures(conn, current_run_id, limit=200):
+    conn.row_factory = _row_factory(conn.row_factory)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT
+            suite,
+            test_name,
+            seed,
+            test_family,
+            worker_name,
+            failure_type,
+            assertion_name,
+            vcd_path,
+            cycles,
+            expected_cycles
+        FROM result_details
+        WHERE run_id = ?
+          AND status = 'FAIL'
+        ORDER BY suite, test_name, seed
+        LIMIT ?
+        """,
+        (current_run_id, limit),
     )
     return [dict(row) for row in cur.fetchall()]
 

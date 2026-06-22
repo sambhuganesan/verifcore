@@ -231,7 +231,7 @@ WHERE tr.run_id = ?
   AND tr.vcd_path IS NOT NULL;
 ```
 
-Worst performance regressions:
+Tests that slowed down the most:
 
 ```sql
 SELECT

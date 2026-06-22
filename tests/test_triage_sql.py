@@ -2,9 +2,16 @@ import sqlite3
 
 from backend import db
 from backend.triage_sql import (
+    current_failures,
+    current_failures_by_worker,
+    failed_test_vcds,
     fetch_comparison_rows,
+    filter_values,
+    new_failures,
+    query_comparison,
     summarize_comparison,
     top_failure_signatures,
+    worst_perf_regressions,
 )
 
 
@@ -171,6 +178,139 @@ def test_top_failure_signatures_groups_current_failures():
         {"failure_signature": "ASSERTION_FAILED:packet_ordering", "result_count": 1},
         {"failure_signature": "ASSERTION_FAILED:valid_ready_protocol", "result_count": 1},
         {"failure_signature": "INFRA_FAILURE:sim_timeout", "result_count": 1},
+    ]
+
+
+def test_new_failures_returns_comparison_rows():
+    conn, baseline_id, current_id = make_fixture_db()
+
+    rows = new_failures(conn, baseline_id, current_id)
+
+    assert [row["test_name"] for row in rows] == ["new_fail", "infra"]
+
+
+def test_worst_perf_regressions_orders_by_cycle_change():
+    conn, baseline_id, current_id = make_fixture_db()
+
+    rows = worst_perf_regressions(conn, baseline_id, current_id)
+
+    assert [row["test_name"] for row in rows] == ["slow", "new_fail"]
+    assert rows[0]["cycle_change_pct"] == 30.0
+
+
+def test_current_failures_by_worker_can_filter_to_dma():
+    conn, _, current_id = make_fixture_db()
+
+    rows = current_failures_by_worker(conn, current_id, suite="dma")
+
+    assert rows == [
+        {
+            "worker_name": "worker-2",
+            "total_tests": 1,
+            "failed_tests": 1,
+            "failure_rate_pct": 100.0,
+            "infra_failures": 0,
+            "assertion_failures": 1,
+        },
+        {
+            "worker_name": "worker-1",
+            "total_tests": 2,
+            "failed_tests": 1,
+            "failure_rate_pct": 50.0,
+            "infra_failures": 0,
+            "assertion_failures": 1,
+        },
+    ]
+
+
+def test_failed_test_vcds_returns_current_failure_artifacts():
+    conn, _, current_id = make_fixture_db()
+
+    rows = failed_test_vcds(conn, current_id)
+
+    assert [row["vcd_path"] for row in rows] == [
+        "waves/new.vcd",
+        "waves/still.vcd",
+        "waves/infra.vcd",
+    ]
+
+
+def test_current_failures_returns_normalized_debug_fields():
+    conn, _, current_id = make_fixture_db()
+
+    rows = current_failures(conn, current_id)
+
+    assert rows[0]["failure_type"] == "ASSERTION_FAILED"
+    assert rows[0]["test_family"] == "new"
+
+
+def test_query_comparison_combines_question_and_filters():
+    conn, baseline_id, current_id = make_fixture_db()
+
+    rows = query_comparison(
+        conn,
+        baseline_id,
+        current_id,
+        query_kind="current_failures",
+        suite="dma",
+        worker="worker-2",
+        failure_type="ASSERTION_FAILED",
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["test_name"] == "still_fail"
+
+
+def test_query_comparison_supports_slowdown_threshold():
+    conn, baseline_id, current_id = make_fixture_db()
+
+    rows = query_comparison(
+        conn,
+        baseline_id,
+        current_id,
+        query_kind="all",
+        min_cycle_change_pct=25.0,
+    )
+
+    assert [row["test_name"] for row in rows] == ["slow", "new_fail"]
+
+
+def test_slowed_down_query_includes_passing_tests():
+    conn, baseline_id, current_id = make_fixture_db()
+
+    rows = query_comparison(
+        conn,
+        baseline_id,
+        current_id,
+        query_kind="slowed_down",
+    )
+
+    assert [row["test_name"] for row in rows] == ["slow", "new_fail"]
+    assert rows[0]["current_status"] == "PASS"
+
+
+def test_query_comparison_rejects_unknown_query_kind():
+    conn, baseline_id, current_id = make_fixture_db()
+
+    try:
+        query_comparison(conn, baseline_id, current_id, query_kind="raw_sql_plz")
+        assert False, "unknown query kind should fail"
+    except ValueError:
+        pass
+
+
+def test_filter_values_lists_queryable_fields():
+    conn, _, current_id = make_fixture_db()
+
+    values = filter_values(conn, current_id)
+
+    assert values["suites"] == ["cache", "dma", "noc"]
+    assert values["workers"] == ["worker-1", "worker-2", "worker-3", "worker-4"]
+    assert values["failure_types"] == ["ASSERTION_FAILED", "INFRA_FAILURE"]
+    assert values["assertions"] == [
+        "packet_ordering",
+        "sim_timeout",
+        "valid_ready_protocol",
     ]
 
 

@@ -1,8 +1,18 @@
 # VerifCore
 
-VerifCore is a small C++/Python/SQLite project inspired by design verification regression tooling.
+VerifCore is a small C++/Python/SQLite project inspired by design verification
+regression tooling.
 
-The technical goal was to build the core pipeline directly instead of wrapping a large parsing or analytics framework. The C++ parser is a small systems-programming component built with the standard library: it reads log lines, classifies records, parses key/value fields, and emits JSONL without external C++ dependencies. The Python backend also stays lightweight and uses the standard library for log generation, SQLite ingestion, and run comparison. Streamlit is used only for the local demo UI.
+The project takes synthetic DV-style regression logs, parses them into JSONL,
+stores them in a normalized SQLite schema, and lets engineers compare baseline
+and current runs through SQL-backed triage queries.
+
+The goal is not to build a chatbot or a production DV platform. The goal is to
+show the core infrastructure pattern:
+
+```text
+raw logs -> structured records -> relational database -> SQL triage UI
+```
 
 ## Quick Start
 
@@ -12,9 +22,10 @@ From the `verifcore/` directory:
 make demo NUM_TESTS=1000
 ```
 
-This builds the C++ parser, generates baseline/regression logs, parses them into JSONL, ingests them into SQLite, and prints the regression report.
+This builds the C++ parser, generates baseline/current logs, parses them into
+JSONL, ingests them into SQLite, and prints the terminal regression report.
 
-To launch the local UI:
+To install Python dependencies and launch the local UI:
 
 ```bash
 python3 -m venv .venv
@@ -22,117 +33,80 @@ python3 -m venv .venv
 make ui
 ```
 
-Then open the Streamlit URL printed in the terminal.
+`requirements.txt` includes Streamlit for the UI and pytest for the test suite.
+Then open the Streamlit URL printed in the terminal, usually:
 
----
+```text
+http://localhost:8501
+```
 
-It demonstrates the workflow of turning noisy regression logs into structured signals:
+## What VerifCore Answers
 
-* new failures
-* corrected tests
-* still-failing tests
-* infrastructure failures
-* regressed tests
-* improved tests
-* failure signature groups
-* `status_changing` tests
+VerifCore compares two regression runs and helps answer questions such as:
 
-The project is intentionally small and it mirrors the shape of real regression infrastructure: logs are generated, parsed, normalized into JSONL, ingested into a database, and analyzed across runs.
+* Which tests are newly failing?
+* Which tests were fixed?
+* Which tests are still failing?
+* Which tests slowed down?
+* Which current failures have VCD paths?
+* Which failures came from a specific suite or worker?
+* Which assertion or failure type is involved?
+* Which compared tests changed cycles by at least a chosen percentage?
 
----
+The UI exposes these as a query form backed by parameterized SQL, not natural
+language.
 
-## Why this exists
-
-Hardware design verification teams run large regression suites to check whether a design still behaves correctly after code changes.
-
-A single regression run can contain many individual tests. A test may 
-* pass
-* fail due to a design assertion 
-* fail because of infrastructure issues
-* become slower than before. 
-
-Raw logs are hard to inspect manually, especially when there are hundreds or thousands of tests.
-
-VerifCore shows how to convert those raw logs into a queryable dataset and then produce a useful regression report. It answers the question:
-
-> What changed between the baseline run and the current run?
-
----
-
-## High-level pipeline
+## High-Level Pipeline
 
 ```text
 synthetic DV logs
     -> C++ streaming parser
     -> JSONL test records
-    -> SQLite ingestion
-    -> regression analyzer
-    -> terminal report or Streamlit UI
+    -> normalized SQLite ingestion
+    -> SQL comparison layer
+    -> terminal report and Streamlit query UI
 ```
 
-The same SQLite database powers both the terminal report and the local Streamlit dashboard.
+The same SQLite database powers the terminal report and the Streamlit UI.
 
----
-
-## Project structure
+## Project Structure
 
 ```text
 verifcore/
 ├── README.md
 ├── Makefile
 ├── requirements.txt
-├── log_parser
-├── verifcore.db
-├── .streamlit/
-│   └── config.toml
-│
 ├── cpp/
 │   ├── main.cc
-│   ├── line_reader.h
-│   ├── line_reader.cc
-│   ├── line_classifier.h
-│   ├── line_classifier.cc
-│   ├── kv_parser.h
-│   ├── kv_parser.cc
-│   ├── string_utils.h
-│   ├── string_utils.cc
-│   ├── record_parser.h
-│   ├── record_parser.cc
-│   ├── test_result.h
-│   └── test_result.cc
-│
+│   ├── line_reader.*
+│   ├── line_classifier.*
+│   ├── kv_parser.*
+│   ├── record_parser.*
+│   ├── string_utils.*
+│   └── test_result.*
 ├── backend/
-│   ├── __init__.py
 │   ├── generate_logs.py
 │   ├── db.py
 │   ├── ingest.py
-│   └── analyze.py
-│
+│   ├── analyze.py
+│   └── triage_sql.py
+├── docs/
+│   └── sql_regression_model.md
 ├── ui/
 │   └── app.py
-│
 ├── sample_logs/
-│   ├── manual.log
-│   ├── run_001.log
-│   └── run_002.log
-│
 ├── parsed/
-│   ├── run_001.jsonl
-│   └── run_002.jsonl
-│
 └── tests/
-    └── test_analysis.py
+    ├── test_analysis.py
+    └── test_triage_sql.py
 ```
 
----
+## Synthetic Log Format
 
-## Synthetic log format
+VerifCore uses a small fake DV-style log format. One log file represents one
+regression run. Each test result is represented by a block of lines.
 
-VerifCore uses a small fake DV-style log format.
-
-A whole log file represents one regression run. Each test result is represented by a block of lines.
-
-A passing test looks like this:
+A passing test:
 
 ```text
 [RUN] suite=dma test=aligned_burst_0 seed=1000 worker=worker-0
@@ -140,7 +114,7 @@ A passing test looks like this:
 [PASS]
 ```
 
-A failing test looks like this:
+A failing test:
 
 ```text
 [RUN] suite=systolic_array test=backpressure_13 seed=1013 worker=worker-5
@@ -148,137 +122,77 @@ A failing test looks like this:
 [FAIL] type=ASSERTION_FAILED assertion=fifo_no_overflow artifact=waves/systolic_array_backpressure_13_seed1013.vcd
 ```
 
-Each test record contains:
+Each record contains:
 
-| Field             | Meaning                                                         |
-| ----------------- | --------------------------------------------------------------- |
-| `suite`           | Logical test suite, such as `dma`, `cache`, or `systolic_array` |
-| `test`            | Test name within the suite                                      |
-| `seed`            | Deterministic random seed for the test                          |
-| `worker`          | Fake worker that ran the test                                   |
-| `cycles`          | Actual simulated hardware cycles taken                          |
-| `expected_cycles` | Expected cycle count for the test                               |
-| `utilization`     | Fake utilization metric                                         |
-| `status`          | `PASS` or `FAIL`                                                |
-| `type`            | Failure type, such as `ASSERTION_FAILED` or `INFRA_FAILURE`     |
-| `assertion`       | Assertion or failure signature                                  |
-| `artifact`        | Path to a fake waveform artifact                                |
+| Field | Meaning |
+| --- | --- |
+| `suite` | Logical area such as `dma`, `cache`, or `systolic_array` |
+| `test` / `test_name` | Test name within the suite |
+| `seed` | Deterministic random seed |
+| `worker` / `worker_id` | Fake worker that ran the test |
+| `cycles` | Actual simulated hardware cycles taken |
+| `expected_cycles` | Expected cycle count |
+| `utilization` | Synthetic utilization metric |
+| `status` | `PASS` or `FAIL` |
+| `type` / `failure_type` | `ASSERTION_FAILED` or `INFRA_FAILURE` |
+| `assertion` / `assertion_name` | Specific failure signature |
+| `artifact` / `vcd_path` | Fake waveform path |
 
-The identity of a test is:
-
-```text
-suite + test_name + seed
-```
-
-Identity is stable across runs, so VerifCore can compare the same test in `run_001` and `run_002`.
-
----
-
-## Design verification concepts used
-
-VerifCore uses a few simplified hardware verification ideas.
-
-A **clock cycle** is one simulated hardware clock tick. It is not wall-clock time.
-
-A **signal** is a hardware value over time, such as a wire or register.
-
-A **waveform file**, such as a `.vcd`, records signal values over simulated time. In this project, waveform paths are fake artifact paths used for realism.
-
-A **valid/ready protocol** is a common hardware handshake. A transfer happens when `valid=1` and `ready=1`.
-
-**Backpressure** happens when downstream logic is not ready to receive data, so it sets `ready=0`. Backpressure itself is not a bug. A bug happens if the upstream logic mishandles it, for example by changing data while `valid=1` and `ready=0`.
-
-An **assertion failure** means the design violated a rule that the test expected to hold.
-
-An **infrastructure failure** means the failure may not be caused by the design itself. Examples include simulator timeout, worker failure, environment issue, or missing artifact.
-
-### Test suites
-
-A **test suite** is a logical group of tests for one area of the design. VerifCore generates these synthetic suites:
-
-| Suite            | Meaning                                                                 |
-| ---------------- | ----------------------------------------------------------------------- |
-| `dma`            | Direct Memory Access logic, which moves blocks of data without CPU help |
-| `systolic_array` | Matrix/AI accelerator compute fabric, like the datapath used in ML chips |
-| `cache`          | Cache behavior, such as storing, reusing, and invalidating data          |
-| `noc`            | Network-on-chip routing between hardware blocks                          |
-| `decoder`        | Packet or instruction decode logic                                       |
-
-The generated test names describe the kind of scenario being exercised:
-
-| Test family          | Meaning                                                             |
-| -------------------- | ------------------------------------------------------------------- |
-| `aligned_burst`      | Burst memory transfer with aligned addresses                         |
-| `backpressure`       | Valid/ready flow control when downstream logic temporarily stalls     |
-| `randomized_smoke`   | Broad randomized sanity test                                         |
-| `reset_recovery`     | Behavior after reset is asserted and released                        |
-| `protocol_stress`    | Heavy protocol-level traffic intended to expose edge cases            |
-
-### Failure Types
-
-VerifCore uses two synthetic failure types:
-
-| Failure type       | Meaning                                                                 |
-| ------------------ | ----------------------------------------------------------------------- |
-| `ASSERTION_FAILED` | The design broke a rule the test was checking                           |
-| `INFRA_FAILURE`    | The run failed for infrastructure reasons, such as a simulator timeout   |
-
-The `assertion` field gives the more specific failure signature:
-
-| Assertion                  | Meaning                                                                     |
-| -------------------------- | --------------------------------------------------------------------------- |
-| `valid_ready_protocol`     | A valid/ready handshake rule was violated                                    |
-| `fifo_no_overflow`         | A FIFO queue was written when it was already full                            |
-| `reset_clears_state`       | State that should be cleared by reset was still present afterward            |
-| `packet_ordering`          | Packets came out in the wrong order                                          |
-| `sim_timeout`              | The simulator timed out before the test completed; this is an infra failure  |
-
----
-
-## Synthetic regression generation
-
-The generator creates two fake regression logs.
-
-Baseline run:
-
-```bash
-python3 -m backend.generate_logs \
-  --out sample_logs/run_001.log \
-  --seed 1 \
-  --num-tests <count>
-```
-
-Current run with injected regressions:
-
-```bash
-python3 -m backend.generate_logs \
-  --out sample_logs/run_002.log \
-  --seed 2 \
-  --num-tests <count> \
-  --inject-regressions
-```
-
-The two runs share stable test identities:
+The stable identity of a test is:
 
 ```text
 suite + test_name + seed
 ```
 
-The current run intentionally injects useful regression-analysis cases:
+That identity is what lets VerifCore compare the same logical test across
+different runs.
 
-* new failures
-* corrected tests
-* still-failing tests
-* regressed tests
-* improved tests
-* infrastructure failures
-* repeated failure signatures
+## DV Concepts Used
 
-This gives the analyzer meaningful data to compare.
+A **clock cycle** is one simulated hardware clock tick. It is not wall-clock
+time.
 
----
+A **waveform file**, such as a `.vcd`, records signal values over simulated
+time. In this project, VCD paths are fake artifact paths used for realism.
 
-## C++ parser
+An **assertion failure** means the design violated a rule that the test expected
+to hold.
+
+An **infrastructure failure** means the failure may not be caused by the design
+itself. Examples include simulator timeout, worker failure, environment issue,
+or missing artifact.
+
+Generated suites:
+
+| Suite | Meaning |
+| --- | --- |
+| `dma` | Direct Memory Access logic |
+| `systolic_array` | Matrix/AI accelerator compute fabric |
+| `cache` | Cache behavior |
+| `noc` | Network-on-chip routing |
+| `decoder` | Packet or instruction decode logic |
+
+Generated test families:
+
+| Test family | Meaning |
+| --- | --- |
+| `aligned_burst` | Burst memory transfer with aligned addresses |
+| `backpressure` | Valid/ready flow control under downstream stalls |
+| `randomized_smoke` | Broad randomized sanity test |
+| `reset_recovery` | Behavior after reset is asserted and released |
+| `protocol_stress` | Heavy protocol-level traffic |
+
+Failure signatures:
+
+| Failure type | Assertion | Meaning |
+| --- | --- | --- |
+| `ASSERTION_FAILED` | `valid_ready_protocol` | Valid/ready handshake rule was violated |
+| `ASSERTION_FAILED` | `fifo_no_overflow` | FIFO overflow rule was violated |
+| `ASSERTION_FAILED` | `reset_clears_state` | Reset did not clear expected state |
+| `ASSERTION_FAILED` | `packet_ordering` | Packets came out in the wrong order |
+| `INFRA_FAILURE` | `sim_timeout` | Simulator timed out |
+
+## C++ Parser
 
 The C++ parser reads raw log files and writes one JSON object per test result.
 
@@ -288,8 +202,6 @@ Build:
 make build
 ```
 
-The Makefile compiles `log_parser` from `cpp/*.cc`.
-
 Parse logs:
 
 ```bash
@@ -297,41 +209,25 @@ Parse logs:
 ./log_parser sample_logs/run_002.log > parsed/run_002.jsonl
 ```
 
-The parser is split into small components:
+Parser components:
 
-| Component         | Responsibility                                                                  |
-| ----------------- | ------------------------------------------------------------------------------- |
-| `line_reader`     | Reads raw bytes using POSIX `open/read/close`, handles arbitrary chunks, splits lines |
-| `line_classifier` | Classifies lines as `RUN`, `METRIC`, `PASS`, `FAIL`, or `UNKNOWN`               |
-| `kv_parser`       | Parses `key=value` fields                                                       |
-| `record_parser`   | Builds complete `TestResult` records from classified lines                      |
-| `test_result`     | Stores test fields and serializes results as JSON                               |
+| Component | Responsibility |
+| --- | --- |
+| `line_reader` | Reads bytes, handles arbitrary chunks, splits lines |
+| `line_classifier` | Classifies lines as `RUN`, `METRIC`, `PASS`, `FAIL`, or `UNKNOWN` |
+| `kv_parser` | Parses `key=value` fields |
+| `record_parser` | Builds complete `TestResult` records |
+| `test_result` | Stores fields and serializes JSON |
 
-The parser classifies lines and maintains two boolean flags 
-have_run and have_metric which indicate if we are on the 
-current test. This makes the design more robust and closer to real log-processing infrastructure.
-
----
-
-## JSONL output
-
-The parser writes JSONL: one JSON object per line.
-
-Example:
+Example JSONL output:
 
 ```json
 {"suite":"dma","test_name":"aligned_burst_0","seed":1000,"worker_id":"worker-0","cycles":684,"expected_cycles":700,"utilization":0.8,"status":"FAIL","failure_type":"ASSERTION_FAILED","assertion_name":"valid_ready_protocol","artifact_path":"waves/dma_aligned_burst_0_seed1000.vcd"}
 ```
 
-JSONL is useful because large regression outputs can be streamed line by line instead of loaded as one giant JSON array.
+## SQLite Ingestion
 
----
-
-## SQLite ingestion
-
-The ingestion layer stores parsed results in SQLite.
-
-Ingest baseline:
+The ingestion layer stores parsed records in SQLite.
 
 ```bash
 python3 -m backend.ingest \
@@ -341,27 +237,27 @@ python3 -m backend.ingest \
   parsed/run_001.jsonl
 ```
 
-Ingest current run:
+Ingestion normalizes each JSONL record into:
 
-```bash
-python3 -m backend.ingest \
-  --db verifcore.db \
-  --run-name run_002 \
-  --commit def456 \
-  parsed/run_002.jsonl
-```
+* `test_cases`
+* `failure_signatures`
+* `test_results`
 
-SQLite stores the data in a single local file:
+Passing tests have no failure signature. Failing tests reference a reusable
+failure signature.
+
+## Database Schema
+
+VerifCore uses four core tables:
 
 ```text
-verifcore.db
+runs
+test_cases
+failure_signatures
+test_results
 ```
 
----
-
-## Database schema
-
-VerifCore uses a small normalized schema for regression analysis:
+Relationship model:
 
 ```text
 runs 1 ─── * test_results * ─── 1 test_cases
@@ -369,18 +265,16 @@ runs 1 ─── * test_results * ─── 1 test_cases
                   * ─── 0/1 failure_signatures
 ```
 
-`test_results` is the central fact table. Each row says:
+`test_results` is the central fact table. Each row means:
 
 ```text
 in this run, this stable test case produced this result
 ```
 
 Worker name and VCD path stay directly on `test_results` for now because they
-are simple queryable fields in the current project.
+are simple queryable fields in this project.
 
 ### `runs`
-
-One row per regression run.
 
 ```sql
 CREATE TABLE runs (
@@ -391,16 +285,7 @@ CREATE TABLE runs (
 );
 ```
 
-Example:
-
-| id | run_name | commit_hash | created_at |
-| -: | -------- | ----------- | ---------- |
-|  1 | run_001  | abc123      | timestamp  |
-|  2 | run_002  | def456      | timestamp  |
-
 ### `test_cases`
-
-One row per stable logical test identity.
 
 ```sql
 CREATE TABLE test_cases (
@@ -413,18 +298,7 @@ CREATE TABLE test_cases (
 );
 ```
 
-The stable test identity is:
-
-```text
-suite + test_name + seed
-```
-
-That identity is what lets VerifCore compare the same logical test across
-multiple regression runs.
-
 ### `failure_signatures`
-
-One row per reusable failure signature.
 
 ```sql
 CREATE TABLE failure_signatures (
@@ -435,36 +309,19 @@ CREATE TABLE failure_signatures (
 );
 ```
 
-Examples:
-
-| failure_type     | assertion_name       |
-| ---------------- | -------------------- |
-| ASSERTION_FAILED | valid_ready_protocol |
-| ASSERTION_FAILED | packet_ordering      |
-| INFRA_FAILURE    | sim_timeout          |
-
-Passing tests have no failure signature.
-
 ### `test_results`
-
-One row per test result.
 
 ```sql
 CREATE TABLE test_results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-
     run_id INTEGER NOT NULL,
     test_case_id INTEGER NOT NULL,
-
     worker_name TEXT NOT NULL,
-
     status TEXT NOT NULL,
     failure_signature_id INTEGER,
-
     cycles INTEGER NOT NULL,
     expected_cycles INTEGER NOT NULL,
     utilization REAL NOT NULL,
-
     vcd_path TEXT,
 
     FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE,
@@ -485,26 +342,143 @@ CREATE TABLE test_results (
 );
 ```
 
-So for example, with two runs of 200 tests each, the database contains:
+For two runs of 200 tests each:
 
 ```text
-runs:               2 rows
-test_cases:       200 rows
-test_results:     400 rows
+runs:                 2 rows
+test_cases:         200 rows
+test_results:       400 rows
 failure_signatures: reused debug buckets
 ```
 
-The analyzer reads through a flattened SQL view named `result_details`, which
-joins `test_results`, `test_cases`, and `failure_signatures`. This keeps the
-storage normalized while giving analysis code convenient columns such as
-`suite`, `test_name`, `status`, `failure_type`, `assertion_name`, and
-`vcd_path`.
+## SQL Views And Query Layer
 
----
+The normalized schema is good for integrity, but analysis often wants a flat
+row shape. VerifCore creates a SQL view named `result_details`:
 
-## Regression analyzer
+```text
+result_details =
+test_results
+JOIN test_cases
+LEFT JOIN failure_signatures
+```
 
-Run:
+It exposes convenient columns such as:
+
+```text
+run_id
+suite
+test_name
+seed
+test_family
+worker_name
+status
+failure_type
+assertion_name
+vcd_path
+cycles
+expected_cycles
+utilization
+```
+
+The main comparison query is a self-join through stable test identity:
+
+```sql
+WITH regression_comparison AS (
+    SELECT ...
+    FROM result_details b
+    JOIN result_details c
+      ON b.suite = c.suite
+     AND b.test_name = c.test_name
+     AND b.seed = c.seed
+    WHERE b.run_id = ?
+      AND c.run_id = ?
+)
+```
+
+`backend/triage_sql.py` builds parameterized SQL queries over that comparison
+relation. The UI does not concatenate user text into SQL.
+
+Supported query kinds:
+
+| UI question | Meaning |
+| --- | --- |
+| `New failures` | Baseline passed, current failed |
+| `Current failures` | Current result is `FAIL` |
+| `Fixed tests` | Baseline failed, current passed |
+| `Still failing` | Failed in both baseline and current |
+| `Slowed down` | Current cycles increased enough versus baseline |
+| `Failures with VCDs` | Current failures that have a VCD path |
+| `All compared tests` | All baseline/current matched tests |
+
+Supported filters:
+
+| Filter | Notes |
+| --- | --- |
+| `Suite` | Values come from current run data |
+| `Worker` | Values come from current run data |
+| `Failure type` | Values come from current failures |
+| `Assertion` | Values come from current failures |
+| `Minimum cycle change %` | Float from `-100` to `100`; blank means no filter |
+| `Row limit` | Limits returned rows |
+
+The result table keeps `seed` as its own column:
+
+```text
+suite | test | seed | baseline | current | failure | cycle change % | worker | vcd
+```
+
+## Streamlit UI
+
+The UI is a local SQL-backed query surface on top of `verifcore.db`.
+
+Start it with:
+
+```bash
+make ui
+```
+
+The page has:
+
+* baseline/current run selection
+* query-aware metrics above the form
+* a query selector
+* filters for suite, worker, failure type, assertion, and cycle change
+* a results table
+
+The top metrics update with the active query and filters:
+
+```text
+Rows
+Current failures
+New failures
+Fixed
+Slower
+Infra
+```
+
+Example UI queries:
+
+```text
+Question: Current failures
+Suite: dma
+Worker: Any
+Failure type: ASSERTION_FAILED
+```
+
+```text
+Question: Slowed down
+Minimum cycle change %: 20
+```
+
+```text
+Question: Failures with VCDs
+Suite: cache
+```
+
+## Terminal Analyzer
+
+The terminal analyzer still prints a compact regression report:
 
 ```bash
 python3 -m backend.analyze \
@@ -513,107 +487,18 @@ python3 -m backend.analyze \
   --current run_002
 ```
 
-The analyzer compares tests by:
+It reports:
 
-```text
-suite + test_name + seed
-```
+* new failures
+* corrected tests
+* still-failing tests
+* slowed-down tests
+* improved tests
+* infrastructure failures
+* failure signature groups
+* `status_changing` tests
 
-It then reports several categories.
-
-### New failures
-
-A test passed in the baseline run and failed in the current run.
-
-```text
-baseline: PASS
-current:  FAIL
-```
-
-### Corrected tests
-
-A test failed in the baseline run and passed in the current run.
-
-```text
-baseline: FAIL
-current:  PASS
-```
-
-### Still failing
-
-A test failed in both runs.
-
-```text
-baseline: FAIL
-current:  FAIL
-```
-
-### Regressed
-
-A test is regressed if current cycles are at least 20% higher than baseline cycles.
-
-```text
-current_cycles >= baseline_cycles * 1.20
-```
-
-Example:
-
-```text
-baseline cycles = 684
-current cycles  = 863
-
-684 * 1.20 = 820.8
-863 >= 820.8
-```
-
-So this test is regressed.
-
-### Improved
-
-A test is improved if current cycles are lower than baseline cycles.
-
-```text
-current_cycles < baseline_cycles
-```
-
-This highlights successful changes where the current run got faster.
-
-### Infrastructure failures
-
-A current-run failure is counted as infrastructure-related if:
-
-```text
-status == FAIL
-failure_type == INFRA_FAILURE
-```
-
-### Failure signature groups
-
-Current failures are grouped by:
-
-```text
-failure_type + ":" + assertion_name
-```
-
-Example groups:
-
-```text
-INFRA_FAILURE:sim_timeout
-ASSERTION_FAILED:fifo_no_overflow
-ASSERTION_FAILED:valid_ready_protocol
-```
-
-This helps reduce many raw failures into a smaller number of debug buckets.
-
-### `status_changing`
-
-Across all stored runs, VerifCore finds tests that have appeared as both `PASS` and `FAIL`.
-
-This is labeled `status_changing` because with only two different commits, a status change may be a real regression or fix rather than true flakiness. True flakiness usually requires repeated runs under the same commit/configuration.
-
----
-
-## Example analyzer output
+Example output:
 
 ```text
 VerifCore Regression Report
@@ -626,84 +511,32 @@ Summary
 New failures: 19
 Corrected tests: 7
 Still failing: 9
-Regressed: 10
+Slowed down: 10
 Improved: 90
 Infra failures: 9
 status_changing: 26
-
-Failure signature groups
-------------------------
-INFRA_FAILURE:sim_timeout: 9
-ASSERTION_FAILED:fifo_no_overflow: 7
-ASSERTION_FAILED:packet_ordering: 7
-ASSERTION_FAILED:reset_clears_state: 3
-ASSERTION_FAILED:valid_ready_protocol: 2
 ```
 
----
-
-## Tests
-
-Run:
-
-```bash
-python3 -m pytest tests
-```
-
-The current tests cover:
-
-* performance regression detection
-* failure signature grouping
-* ignoring passing tests in signature groups
-* run comparison categories:
-
-  * new failures
-  * corrected tests
-  * still failing tests
-  * regressed tests
-  * improved tests
-
----
-
-## Makefile workflow
-
-Run these commands from the `verifcore/` directory.
-
-The intended workflow is:
-
-```bash
-make demo
-```
-
-This rebuilds the full demo from scratch:
-
-1. clean generated files
-2. build the C++ parser
-3. generate two synthetic regression logs
-4. parse logs into JSONL
-5. ingest JSONL into SQLite
-6. run the analyzer report
+## Makefile Workflow
 
 Useful targets:
 
 ```bash
-make build     # compile log_parser from cpp/*.cc
+make build                # compile C++ parser
 make generate-baseline    # create sample_logs/run_001.log
-make generate-regression  # create sample_logs/run_002.log with injected regressions
-make parse     # convert logs to parsed/*.jsonl using the C++ parser
-make ingest    # load parsed JSONL into verifcore.db
-make analyze   # print the terminal regression report
-make test      # run pytest tests
-make ui        # start the Streamlit dashboard
-make demo      # clean -> build -> generate-baseline -> generate-regression -> parse -> ingest -> analyze
-make clean     # remove generated demo artifacts
+make generate-regression  # create sample_logs/run_002.log with injected changes
+make parse                # convert logs to parsed/*.jsonl
+make ingest               # load parsed JSONL into verifcore.db
+make analyze              # print terminal report
+make test                 # run pytest tests
+make ui                   # start Streamlit UI
+make demo                 # clean -> build -> generate -> parse -> ingest -> analyze
+make clean                # remove generated demo artifacts
 ```
 
-Generation defaults to 200 tests per run. Override it with `NUM_TESTS`:
+Generation defaults to 200 tests per run. Override with:
 
 ```bash
-make generate-baseline NUM_TESTS=1000
-make generate-regression NUM_TESTS=1000
 make demo NUM_TESTS=1000
 ```
 
@@ -718,137 +551,95 @@ sample_logs/run_*.log
 
 It intentionally keeps `sample_logs/manual.log`.
 
----
-
-## Streamlit UI
-
-The UI is a local dashboard on top of `verifcore.db`.
-
-First build the demo data:
+## Manual Workflow
 
 ```bash
-make demo
-```
-
-Install Streamlit into a local virtual environment if needed:
-
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-```
-
-Then start the UI:
-
-```bash
-make ui
-```
-
-Streamlit prints a local URL such as:
-
-```text
-http://localhost:8501
-```
-
-The UI is a single results page with:
-
-* a summary bar chart
-* the main comparison table
-* row search
-* change-type filtering
-* small visuals for the current search
-* failure signature groups
-
-The `all flagged` category is the union of rows worth triaging, including negative comparison changes and `status_changing` tests. `improved` is queryable as a filter, but it is not included in `all flagged`.
-
-The search box is plain text search across table cells. It is not natural-language querying. Useful searches include:
-
-```text
-dma
-seed=1000
-sim_timeout
-ASSERTION_FAILED
-fifo_no_overflow
-worker-3
-```
-
----
-
-## Manual workflow
-
-If not using the Makefile, run the project manually:
-
-```bash
-# Build C++ parser
+# Build parser
 g++ -std=c++17 -Wall -Wextra -O2 cpp/*.cc -o log_parser
 
 # Generate logs
-python3 -m backend.generate_logs --out sample_logs/run_001.log --seed 1 --num-tests <count>
-python3 -m backend.generate_logs --out sample_logs/run_002.log --seed 2 --num-tests <count> --inject-regressions
+python3 -m backend.generate_logs --out sample_logs/run_001.log --seed 1 --num-tests 200
+python3 -m backend.generate_logs --out sample_logs/run_002.log --seed 2 --num-tests 200 --inject-regressions
 
-# Parse logs to JSONL
+# Parse logs
+mkdir -p parsed
 ./log_parser sample_logs/run_001.log > parsed/run_001.jsonl
 ./log_parser sample_logs/run_002.log > parsed/run_002.jsonl
 
-# Ingest JSONL into SQLite
+# Ingest into SQLite
 rm -f verifcore.db
 python3 -m backend.ingest --db verifcore.db --run-name run_001 --commit abc123 parsed/run_001.jsonl
 python3 -m backend.ingest --db verifcore.db --run-name run_002 --commit def456 parsed/run_002.jsonl
 
-# Analyze runs
+# Analyze
 python3 -m backend.analyze --db verifcore.db --baseline run_001 --current run_002
 
-# Run tests
+# Test
 python3 -m pytest tests
 
-# Start UI, after installing requirements into .venv
+# UI
 .venv/bin/python -m streamlit run ui/app.py --server.headless true
 ```
 
----
+## Tests
 
-## Current limitations
+Run:
 
-VerifCore is a toy project.
+```bash
+python3 -m pytest tests
+```
+
+The tests cover:
+
+* pass/fail comparison categories
+* slowdown and improvement detection
+* failure signature grouping
+* normalized schema uniqueness
+* SQL comparison rows
+* query filtering by suite, worker, failure type, assertion, and cycle change
+* queryable filter value discovery
+* rejection of unsupported query kinds
+
+## Current Limitations
+
+VerifCore is intentionally small.
 
 Current limitations:
 
-* It does not parse real simulator logs.
+* It uses synthetic logs, not real simulator output.
 * It does not verify real RTL.
-* Waveform paths are fake artifact paths.
+* VCD paths are fake artifact paths.
 * Failure types and assertions are synthetic.
-* Performance metrics are generated, not measured from real hardware simulation.
-* Flaky detection is approximate because true flakiness requires repeated runs under the same commit/configuration.
-* The UI is local-only and reads from the generated SQLite database.
+* Cycle counts are generated, not measured from real simulation.
+* `status_changing` is approximate because true flakiness requires repeated runs under the same commit/configuration.
+* The UI is local-only.
+* The query UI is controlled filters, not natural-language search.
 
----
-
-## Future work
+## Future Work
 
 Possible extensions:
 
-* Add FastAPI endpoints for querying runs, failures, regressed tests, and improved tests.
-* Add a React frontend for a more polished dashboard.
-* Add support for uploaded log files.
-* Add richer SQL queries for filtering by suite, assertion, failure type, or worker.
-* Add run metadata such as branch, author, simulator version, and machine pool.
-* Track artifact links and waveform paths in a clickable UI.
-* Distinguish true flaky tests from real commit-to-commit status changes.
-* Support multiple baselines and historical trends.
-* Add latency/utilization charts.
+* Add historical trend queries across many runs.
+* Add branch, author, simulator version, or machine metadata.
 * Add export to CSV or HTML reports.
-
----
+* Add clickable artifact handling for real VCD/log paths.
+* Add richer grouping queries for suite, assertion, worker, and test family.
+* Add a true flakiness model using repeated runs under the same commit.
 
 ## Summary
 
-VerifCore demonstrates a miniature design-verification regression analysis workflow.
+VerifCore demonstrates a miniature design-verification regression analysis
+workflow.
 
-It starts with raw synthetic logs, parses them with a C++ streaming parser, serializes structured JSONL, stores results in SQLite, and compares regression runs to surface meaningful changes.
+It starts with raw synthetic logs, parses them with a C++ streaming parser,
+serializes structured JSONL, stores normalized records in SQLite, and uses SQL
+queries to compare regression runs.
 
-The goal is not to build a production DV platform. The goal is to show the core infrastructure pattern:
+The important idea is:
 
 ```text
-raw logs -> structured records -> queryable database -> actionable regression report
+stable test identities + normalized results + SQL comparison queries
 ```
 
-That pattern is common across verification, infrastructure, CI systems, and large-scale engineering workflows.
+That pattern is common across verification, CI systems, infrastructure
+monitoring, and large-scale engineering workflows.
